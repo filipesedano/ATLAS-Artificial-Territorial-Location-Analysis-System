@@ -1,0 +1,3 @@
+Insight,Architecture,ADR,Issue,PR,Implementation,Component,Impact,Notes
+"ACAS-009: Adaptive Normality - initial proposal","ACAS Foundation: Memory & Runtime contracts","ACAS-009","","","","Memory, Runtime","High","Seed ADR to validate memory schemas and runtime APIs"
+
