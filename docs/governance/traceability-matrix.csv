@@ -1,0 +1,5 @@
+Insight,Architecture,ADR,Issue,Component,Status,Validation,Notes
+Foundation,ACAS Foundation v1,ADR-0001,ACAS-010,Identity Layer,Draft,Pending,Seeded from Foundation and ADR-0001
+Foundation,ACAS Foundation v1,ADR-0002,ACAS-011,Cognitive Runtime,Draft,Pending,Seeded from Foundation and ADR-0002
+Foundation,ACAS Foundation v1,ADR-0003,ACAS-012,Memory System,Draft,Pending,Seeded from Foundation and ADR-0003
+Foundation,ACAS Foundation v1,ADR-0004,ACAS-013,Event System,Draft,Pending,Seeded from Foundation and ADR-0004
