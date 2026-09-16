@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ATLAS — Observatório de Rede</title>
+  <style>
+    :root {
+      --paper: #dce3df;
+      --panel: rgba(224, 231, 227, .88);
+      --ink: #15211f;
+      --muted: #687572;
+      --line: rgba(21, 33, 31, .24);
+      --normal: #f5fbf8;
+      --cyan: #6ad5cf;
+      --amber: #b8974d;
+      --critical: #a92f35;
+      --shadow: rgba(12, 22, 20, .18);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 50% 45%, rgba(255,255,255,.82), transparent 34%),
+        linear-gradient(135deg, #cbd4d0, #e8eeeb 55%, #c9d2ce);
+      font-family: "Segoe UI", Arial, sans-serif;
+      overflow: hidden;
+    }
+
+    button { font: inherit; }
+    .shell { height: 100vh; display: grid; grid-template-rows: 56px 1fr 74px; }
+    .topbar, .timeline {
+      display: flex; align-items: center; gap: 20px;
+      padding: 0 24px; background: rgba(225,232,228,.78);
+      border-color: var(--line); backdrop-filter: blur(12px);
+    }
+    .topbar { border-bottom: 1px solid var(--line); }
+    .timeline { border-top: 1px solid var(--line); justify-content: space-between; }
+    .brand { font-weight: 800; letter-spacing: .18em; }
+    .brand span { font-weight: 400; letter-spacing: .08em; }
+    .top-status { margin-left: auto; display: flex; gap: 18px; color: var(--muted); font-size: 12px; }
+    .live::before { content:""; display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--cyan); margin-right:7px; box-shadow:0 0 10px var(--cyan); }
+
+    main { min-height: 0; display: grid; grid-template-columns: 260px 1fr 330px; }
+    aside { padding: 18px; background: var(--panel); backdrop-filter: blur(9px); overflow: auto; }
+    aside:first-child { border-right: 1px solid var(--line); }
+    aside:last-child { border-left: 1px solid var(--line); }
+    .section-title { font-size: 10px; letter-spacing: .18em; text-transform: uppercase; color: var(--muted); margin: 8px 0 12px; }
+    .nav { display: grid; gap: 5px; }
+    .nav button, .action {
+      border: 1px solid transparent; background: transparent; color: var(--ink);
+      text-align: left; padding: 9px 10px; cursor: pointer;
+    }
+    .nav button:hover, .nav button.active { background: rgba(255,255,255,.45); border-color: var(--line); }
+    .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 18px; }
+    .metric { border: 1px solid var(--line); padding: 10px; min-height: 66px; background: rgba(255,255,255,.22); }
+    .metric strong { display:block; font-size: 22px; }
+    .metric span { color: var(--muted); font-size: 10px; text-transform: uppercase; }
+
+    .stage { position: relative; min-width: 0; overflow: hidden; perspective: 1000px; }
+    .grid {
+      position: absolute; inset: 0; opacity: .19;
+      background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
+      background-size: 40px 40px; mask-image: radial-gradient(circle, #000 30%, transparent 72%);
+    }
+    .globe-wrap { position: absolute; inset: 0; display: grid; place-items: center; touch-action: none; }
+    .globe {
+      position: relative; width: min(55vw, 560px); aspect-ratio: 1; border-radius: 50%;
+      border: 1px solid rgba(21,33,31,.32); cursor: grab;
+      background:
+        radial-gradient(circle at 35% 30%, rgba(255,255,255,.82), transparent 10%),
+        repeating-radial-gradient(circle at 52% 48%, transparent 0 17px, rgba(21,33,31,.09) 18px 19px),
+        radial-gradient(circle at 40% 35%, rgba(255,255,255,.62), rgba(77,94,89,.26) 43%, rgba(24,38,35,.64) 80%, rgba(8,15,14,.82));
+      box-shadow: inset -42px -22px 80px rgba(7,16,14,.46), 0 24px 70px var(--shadow);
+      transform: rotateX(var(--rx, -8deg)) rotateY(var(--ry, 0deg));
+      transition: transform .12s linear, filter .35s ease;
+    }
+    .globe::before, .globe::after { content:""; position:absolute; inset:12%; border:1px dashed rgba(245,251,248,.38); border-radius:50%; transform:rotate(23deg); }
+    .globe::after { inset:24% 6%; transform:rotate(-49deg); }
+    .node { position:absolute; width:18px; height:18px; border-radius:50%; border:3px solid var(--paper); cursor:pointer; z-index:3; }
+    .node::after { content:""; position:absolute; inset:-9px; border:1px solid currentColor; border-radius:50%; animation:pulse 1.8s infinite; }
+    .node.critical { color:var(--critical); background:var(--critical); box-shadow:0 0 15px rgba(169,47,53,.75); }
+    .node.normal { color:var(--normal); background:var(--normal); box-shadow:0 0 11px rgba(255,255,255,.8); }
+    .router { left:46%; top:46%; }
+    .printer-a { left:27%; top:32%; }
+    .printer-b { left:68%; top:63%; }
+    .server { left:65%; top:25%; }
+    .link { position:absolute; height:1px; background:linear-gradient(90deg, var(--critical), rgba(169,47,53,.2)); transform-origin:left; z-index:2; }
+    .link-a { width:125px; left:31%; top:36%; transform:rotate(31deg); }
+    .link-b { width:145px; left:49%; top:49%; transform:rotate(36deg); }
+    .incident-badge { position:absolute; top:24px; left:50%; translate:-50%; padding:10px 16px; border:1px solid var(--line); background:rgba(229,235,232,.72); text-align:center; }
+    .incident-badge strong { display:block; font-size:18px; }
+    .hint { position:absolute; bottom:20px; left:50%; translate:-50%; color:var(--muted); font-size:12px; }
+    @keyframes pulse { 50% { transform:scale(1.7); opacity:0; } }
+
+    .incident h2 { font-size:19px; margin:0 0 5px; }
+    .severity { color:var(--critical); font-weight:700; font-size:12px; letter-spacing:.1em; }
+    .facts { margin:18px 0; display:grid; gap:8px; }
+    .fact { display:grid; grid-template-columns: 1fr auto; gap:10px; border-bottom:1px solid var(--line); padding-bottom:7px; font-size:12px; }
+    .fact span:first-child { color:var(--muted); }
+    .evidence { border:1px solid var(--line); padding:12px; background:rgba(255,255,255,.24); font-size:12px; line-height:1.5; }
+    .kind { display:inline-block; padding:3px 6px; border:1px solid var(--line); font-size:9px; letter-spacing:.13em; margin-bottom:7px; }
+    .ai { margin-top:12px; border-left:3px solid var(--cyan); padding:10px 12px; background:rgba(255,255,255,.28); font-size:12px; line-height:1.45; }
+    .actions { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-top:14px; }
+    .action { border-color:var(--line); text-align:center; font-size:11px; }
+    .action.primary { background:var(--ink); color:var(--paper); }
+
+    .steps { display:flex; align-items:center; width:100%; gap:5px; }
+    .step { flex:1; position:relative; min-width:0; color:var(--muted); font-size:9px; text-transform:uppercase; text-align:center; padding-top:17px; }
+    .step::before { content:""; position:absolute; top:4px; left:50%; width:8px; height:8px; border:1px solid var(--muted); border-radius:50%; background:var(--paper); z-index:2; }
+    .step::after { content:""; position:absolute; top:8px; left:-50%; width:100%; height:1px; background:var(--line); }
+    .step:first-child::after { display:none; }
+    .step.done::before { background:var(--ink); }
+    .step.current { color:var(--ink); font-weight:700; }
+    .step.current::before { background:var(--amber); box-shadow:0 0 9px var(--amber); }
+
+    .drawer { position:absolute; top:12%; right:0; width:min(430px, 80%); padding:20px; background:rgba(225,232,228,.96); border:1px solid var(--line); box-shadow:-20px 15px 50px var(--shadow); transform:translateX(105%); transition:transform .35s cubic-bezier(.2,.8,.2,1); z-index:9; }
+    .drawer.open { transform:translateX(-18px); }
+    .drawer header { display:flex; justify-content:space-between; align-items:center; }
+    .close { border:0; background:transparent; font-size:24px; cursor:pointer; }
+    .device-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:16px; }
+    .device-grid div { border:1px solid var(--line); padding:10px; font-size:11px; }
+    .device-grid b { display:block; margin-top:3px; }
+
+    @media (max-width: 900px) {
+      main { grid-template-columns: 190px 1fr; }
+      aside:last-child { display:none; }
+      .globe { width:min(66vw, 500px); }
+      .top-status span:not(.live) { display:none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">ATLAS <span>— OBSERVATÓRIO DE REDE</span></div>
+      <div class="top-status"><span>UNIDADE SIMULADA 01</span><span>NÚCLEO ESTÁVEL</span><span class="live">MONITORAMENTO ATIVO</span></div>
+    </header>
+
+    <main>
+      <aside>
+        <div class="section-title">Infraestrutura</div>
+        <nav class="nav" aria-label="Navegação principal">
+          <button class="active">Visão geral</button><button>Equipamentos</button><button>Servidores</button>
+          <button>Roteadores e switches</button><button>Impressoras</button><button>Serviços</button><button>Chamados</button><button>Histórico</button>
+        </nav>
+        <div class="metrics">
+          <div class="metric"><strong>48</strong><span>Monitorados</span></div>
+          <div class="metric"><strong>45</strong><span>Ativos</span></div>
+          <div class="metric"><strong style="color:var(--critical)">3</strong><span>Indisponíveis</span></div>
+          <div class="metric"><strong>12 ms</strong><span>Latência</span></div>
+        </div>
+      </aside>
+
+      <section class="stage" aria-label="Topologia interativa da rede">
+        <div class="grid"></div>
+        <div class="incident-badge"><strong>3 dispositivos indisponíveis</strong><span>2 impressoras • 1 roteador</span></div>
+        <div class="globe-wrap" id="globeWrap">
+          <div class="globe" id="globe" aria-label="Globo da infraestrutura; arraste para girar">
+            <span class="link link-a"></span><span class="link link-b"></span>
+            <button class="node critical printer-a" data-device="Impressora Financeiro" aria-label="Impressora Financeiro indisponível"></button>
+            <button class="node critical router" data-device="Roteador Setor A" aria-label="Roteador Setor A indisponível"></button>
+            <button class="node critical printer-b" data-device="Impressora Atendimento" aria-label="Impressora Atendimento indisponível"></button>
+            <button class="node normal server" data-device="Servidor Local" aria-label="Servidor Local normal"></button>
+          </div>
+        </div>
+        <div class="hint">Arraste para girar • selecione um nó para analisar</div>
+
+        <article class="drawer" id="drawer" aria-live="polite">
+          <header><div><span class="kind">EQUIPAMENTO</span><h2 id="deviceName">Roteador Setor A</h2></div><button class="close" id="closeDrawer" aria-label="Fechar">×</button></header>
+          <div class="device-grid"><div>Estado<b>Indisponível</b></div><div>Último contato<b>há 02 min</b></div><div>Endereço simulado<b>10.0.0.1</b></div><div>Dependências<b>2 equipamentos</b></div></div>
+          <div class="ai"><span class="kind">INFERÊNCIA — REQUER CONFIRMAÇÃO</span><br>Este equipamento pode ser a causa comum da indisponibilidade das duas impressoras. Verifique primeiro energia, enlace e porta de uplink.</div>
+        </article>
+      </section>
+
+      <aside class="incident">
+        <span class="kind">INCIDENTE CORRELACIONADO</span>
+        <h2>ATLAS-2026-001</h2><div class="severity">CRÍTICO • CHAMADO SIMULADO</div>
+        <div class="facts">
+          <div class="fact"><span>Equipamentos afetados</span><b>3</b></div>
+          <div class="fact"><span>Causa provável</span><b>Roteador</b></div>
+          <div class="fact"><span>Confiança</span><b>Alta</b></div>
+          <div class="fact"><span>Técnico</span><b>Aguardando</b></div>
+        </div>
+        <div class="evidence"><span class="kind">MEDIDO</span><br>Roteador sem resposta após três verificações. Duas impressoras perderam comunicação 12 segundos depois.</div>
+        <div class="ai"><span class="kind">ANÁLISE ATLAS • LLM SIMULADO</span><br>Existe uma provável causa comum. Recomenda-se verificar primeiro o roteador. Esta conclusão é uma recomendação, não um diagnóstico confirmado.</div>
+        <div class="actions"><button class="action primary">ASSUMIR CHAMADO</button><button class="action" id="analyze">ANALISAR</button><button class="action">VER EVIDÊNCIAS</button><button class="action">HISTÓRICO</button></div>
+      </aside>
+    </main>
+
+    <footer class="timeline">
+      <div class="steps">
+        <div class="step done">Detectado</div><div class="step done">Validado</div><div class="step done">Correlacionado</div>
+        <div class="step done">Chamado criado</div><div class="step current">Aguardando técnico</div><div class="step">Atendimento</div><div class="step">Normalizado</div>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+    class SimulatedLLMProvider {
+      async analyze(context) {
+        return { kind: "INFERENCE", confidence: "high", requiresHumanConfirmation: true,
+          summary: `${context.device} pode compartilhar a causa principal do incidente.` };
+      }
+    }
+
+    const globe = document.querySelector('#globe');
+    const drawer = document.querySelector('#drawer');
+    const deviceName = document.querySelector('#deviceName');
+    const llmProvider = new SimulatedLLMProvider();
+    let dragging = false, startX = 0, startY = 0, rx = -8, ry = 0;
+
+    document.querySelectorAll('.node').forEach(node => node.addEventListener('click', async event => {
+      event.stopPropagation();
+      deviceName.textContent = node.dataset.device;
+      await llmProvider.analyze({ device: node.dataset.device, incident: 'ATLAS-2026-001' });
+      drawer.classList.add('open');
+    }));
+
+    document.querySelector('#closeDrawer').addEventListener('click', () => drawer.classList.remove('open'));
+    document.querySelector('#analyze').addEventListener('click', () => {
+      deviceName.textContent = 'Roteador Setor A'; drawer.classList.add('open');
+    });
+    globe.addEventListener('pointerdown', event => {
+      dragging = true; startX = event.clientX; startY = event.clientY; globe.setPointerCapture(event.pointerId);
+    });
+    globe.addEventListener('pointermove', event => {
+      if (!dragging) return;
+      ry += (event.clientX - startX) * .25; rx -= (event.clientY - startY) * .2;
+      startX = event.clientX; startY = event.clientY;
+      globe.style.setProperty('--rx', `${rx}deg`); globe.style.setProperty('--ry', `${ry}deg`);
+    });
+    globe.addEventListener('pointerup', () => dragging = false);
+    globe.addEventListener('pointercancel', () => dragging = false);
+  </script>
+</body>
+</html>
