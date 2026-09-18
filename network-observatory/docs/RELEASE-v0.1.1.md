@@ -1,7 +1,7 @@
 # Network Observatory - candidato v0.1.1
 
 Data deste registro: 2026-09-17T23:21:45.8142706-03:00
-Estado: preservacao local; recuperacao em clone limpo pendente.
+Estado: snapshot v0.1.1 de demonstracao local; recuperacao validada conforme registro abaixo.
 Versao pretendida do produto: v0.1.1.
 Pacotes internos: 0.1.0. Banner atual do servidor: v0.1.
 SHA-256 do HTML de trabalho: 6FD209E079C0F59B071BD4A9EC13C7A158218D1890560C7678E61D3187EE9585
@@ -35,10 +35,29 @@ SHA-256 do HTML de trabalho: 6FD209E079C0F59B071BD4A9EC13C7A158218D1890560C7678E
 - Os testes de navegacao verificam padroes no HTML; nao substituem teste no navegador.
 - Corrigir a ambiguidade de proveniencia antes de uso operacional ou integracao do agente.
 
-## Pendencias para concluir a preservacao
+## Roteiro de recuperacao utilizado
 
 - Clonar o commit em pasta limpa e repetir os testes.
 - Iniciar o servidor e verificar painel e API local.
 - Confirmar criacao, leitura e restauracao do SQLite nesse clone.
 - Confirmar encerramento seguro e ausencia de dependencias locais esquecidas.
 - Registrar o resultado da recuperacao antes da tag network-observatory-v0.1.1.
+## Resultado da recuperacao e freeze
+
+Data deste registro: 2026-09-17T23:47:07.9443742-03:00
+Commit de codigo validado: 55bc413b317fd4bb33609534ba872b2141464f64
+Tag prevista: network-observatory-v0.1.1
+
+- Clone independente criado somente a partir do conteudo registrado no Git.
+- Testes no clone: 8 contratos, 10 Collector e 41 Control Plane; nenhuma falha.
+- Servidor iniciado em 127.0.0.1:8080.
+- Banco exclusivo de recuperacao: data/atlas-recovery.db, dentro do clone.
+- Integridade SQLite: ok na inicializacao e na reabertura.
+- Incidentes antes do reinicio: 1. Depois: 1.
+- Comparacao de id, title, status, classification e observationIds: True.
+- Classificacao do incidente observado: INFERRED.
+- Este registro deve ser executado somente apos confirmar o encerramento seguro por Ctrl+C.
+
+Este freeze preserva uma demonstracao local com as limitacoes ja documentadas.
+Nao representa liberacao para producao ou aprovacao da futura integracao do agente.
+A verificacao manual completa da interface no navegador nao foi registrada.
