@@ -1,0 +1,600 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ATLAS — Observatório de Rede</title>
+  <style>
+    :root {
+      --paper: #dce3df;
+      --panel: rgba(224, 231, 227, .88);
+      --ink: #15211f;
+      --muted: #687572;
+      --line: rgba(21, 33, 31, .24);
+      --normal: #f5fbf8;
+      --cyan: #6ad5cf;
+      --amber: #b8974d;
+      --critical: #a92f35;
+      --shadow: rgba(12, 22, 20, .18);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 50% 45%, rgba(255,255,255,.82), transparent 34%),
+        linear-gradient(135deg, #cbd4d0, #e8eeeb 55%, #c9d2ce);
+      font-family: "Segoe UI", Arial, sans-serif;
+      overflow: hidden;
+    }
+
+    button { font: inherit; }
+    .shell { height: 100vh; display: grid; grid-template-rows: 56px 1fr 74px; }
+    .topbar, .timeline {
+      display: flex; align-items: center; gap: 20px;
+      padding: 0 24px; background: rgba(225,232,228,.78);
+      border-color: var(--line); backdrop-filter: blur(12px);
+    }
+    .topbar { border-bottom: 1px solid var(--line); }
+    .timeline { border-top: 1px solid var(--line); justify-content: space-between; }
+    .brand { font-weight: 800; letter-spacing: .18em; }
+    .brand span { font-weight: 400; letter-spacing: .08em; }
+    .top-status { margin-left: auto; display: flex; gap: 18px; color: var(--muted); font-size: 12px; }
+    .live::before { content:""; display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--cyan); margin-right:7px; box-shadow:0 0 10px var(--cyan); }
+    .mode-switch { display:flex; border:1px solid var(--line); padding:2px; gap:2px; }
+    .mode-switch button { border:0; background:transparent; padding:5px 8px; color:var(--muted); cursor:pointer; font-size:10px; }
+    .mode-switch button.active { background:var(--ink); color:var(--paper); }
+
+    main { min-height: 0; display: grid; grid-template-columns: 260px 1fr 330px; }
+    aside { padding: 18px; background: var(--panel); backdrop-filter: blur(9px); overflow: auto; }
+    aside:first-child { border-right: 1px solid var(--line); }
+    aside:last-child { border-left: 1px solid var(--line); }
+    .section-title { font-size: 10px; letter-spacing: .18em; text-transform: uppercase; color: var(--muted); margin: 8px 0 12px; }
+    .nav { display: grid; gap: 5px; }
+    .nav button, .action {
+      border: 1px solid transparent; background: transparent; color: var(--ink);
+      text-align: left; padding: 9px 10px; cursor: pointer;
+    }
+    .nav button:hover, .nav button.active { background: rgba(255,255,255,.45); border-color: var(--line); }
+    .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 18px; }
+    .metric { border: 1px solid var(--line); padding: 10px; min-height: 66px; background: rgba(255,255,255,.22); }
+    .metric strong { display:block; font-size: 22px; }
+    .metric span { color: var(--muted); font-size: 10px; text-transform: uppercase; }
+
+    .stage { position: relative; min-width: 0; overflow: hidden; perspective: 1000px; }
+    .grid {
+      position: absolute; inset: 0; opacity: .19;
+      background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
+      background-size: 40px 40px; mask-image: radial-gradient(circle, #000 30%, transparent 72%);
+    }
+    .globe-wrap { position: absolute; inset: 0; display: grid; place-items: center; touch-action: none; }
+    .globe {
+      --tilt: -8deg;
+      --spin: 0deg;
+      --surface-x: 0px;
+      position: relative; width: min(55vw, 560px); aspect-ratio: 1; border-radius: 50%;
+      border: 1px solid rgba(21,33,31,.32); cursor: grab;
+      background:
+        radial-gradient(circle at 35% 30%, rgba(255,255,255,.82), transparent 10%),
+        repeating-radial-gradient(circle at 52% 48%, transparent 0 17px, rgba(21,33,31,.09) 18px 19px),
+        radial-gradient(circle at 40% 35%, rgba(255,255,255,.62), rgba(77,94,89,.26) 43%, rgba(24,38,35,.64) 80%, rgba(8,15,14,.82));
+      background-position: var(--surface-x) 0, var(--surface-x) 0, 0 0;
+      box-shadow: inset -42px -22px 80px rgba(7,16,14,.46), 0 24px 70px var(--shadow);
+      transform: rotateX(var(--tilt));
+      transition: transform .12s linear, filter .35s ease;
+      transform-style: preserve-3d;
+    }
+    .globe:active { cursor: grabbing; }
+    .globe::before, .globe::after { content:""; position:absolute; inset:12%; border:1px dashed rgba(245,251,248,.38); border-radius:50%; transform:rotate(calc(23deg + var(--spin))); }
+    .globe::after { inset:24% 6%; transform:rotate(calc(-49deg - var(--spin))); }
+    .node { position:absolute; width:18px; height:18px; border-radius:50%; border:3px solid var(--paper); cursor:pointer; z-index:3; }
+    .node::after { content:""; position:absolute; inset:-9px; border:1px solid currentColor; border-radius:50%; animation:pulse 1.8s infinite; }
+    .node.critical { color:var(--critical); background:var(--critical); box-shadow:0 0 15px rgba(169,47,53,.75); }
+    .node.normal { color:var(--normal); background:var(--normal); box-shadow:0 0 11px rgba(255,255,255,.8); }
+    .router { left:46%; top:46%; }
+    .printer-a { left:27%; top:32%; }
+    .printer-b { left:68%; top:63%; }
+    .server { left:65%; top:25%; }
+    .link { position:absolute; height:1px; background:linear-gradient(90deg, var(--critical), rgba(169,47,53,.2)); transform-origin:left; z-index:2; }
+    .link-a { width:125px; left:31%; top:36%; transform:rotate(31deg); }
+    .link-b { width:145px; left:49%; top:49%; transform:rotate(36deg); }
+    .incident-badge { position:absolute; top:24px; left:50%; translate:-50%; padding:10px 16px; border:1px solid var(--line); background:rgba(229,235,232,.72); text-align:center; }
+    .incident-badge strong { display:block; font-size:18px; }
+    .hint { position:absolute; bottom:20px; left:50%; translate:-50%; color:var(--muted); font-size:12px; }
+    @keyframes pulse { 50% { transform:scale(1.7); opacity:0; } }
+
+    .incident h2 { font-size:19px; margin:0 0 5px; }
+    .severity { color:var(--critical); font-weight:700; font-size:12px; letter-spacing:.1em; }
+    .facts { margin:18px 0; display:grid; gap:8px; }
+    .fact { display:grid; grid-template-columns: 1fr auto; gap:10px; border-bottom:1px solid var(--line); padding-bottom:7px; font-size:12px; }
+    .fact span:first-child { color:var(--muted); }
+    .evidence { border:1px solid var(--line); padding:12px; background:rgba(255,255,255,.24); font-size:12px; line-height:1.5; }
+    .kind { display:inline-block; padding:3px 6px; border:1px solid var(--line); font-size:9px; letter-spacing:.13em; margin-bottom:7px; }
+    .ai { margin-top:12px; border-left:3px solid var(--cyan); padding:10px 12px; background:rgba(255,255,255,.28); font-size:12px; line-height:1.45; }
+    .actions { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-top:14px; }
+    .action { border-color:var(--line); text-align:center; font-size:11px; }
+    .action.primary { background:var(--ink); color:var(--paper); }
+
+    .section-view { position:absolute; inset:0; overflow:auto; padding:38px 44px 60px; background:rgba(220,227,223,.72); backdrop-filter:blur(8px); z-index:7; }
+    .section-view[hidden] { display:none; }
+    .section-head { display:flex; justify-content:space-between; gap:24px; align-items:flex-start; margin-bottom:28px; }
+    .section-head h1 { margin:5px 0 7px; font-size:30px; font-weight:650; }
+    .section-head p { margin:0; color:var(--muted); max-width:680px; line-height:1.5; }
+    .source-badge { border:1px solid var(--line); padding:8px 10px; font-size:9px; letter-spacing:.13em; white-space:nowrap; }
+    .section-cards { display:grid; grid-template-columns:repeat(4,minmax(120px,1fr)); gap:10px; margin-bottom:24px; }
+    .section-card { min-height:92px; border:1px solid var(--line); background:rgba(255,255,255,.28); padding:15px; }
+    .section-card strong { display:block; font-size:25px; margin-bottom:8px; }
+    .section-card span { color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.08em; }
+    .section-table { width:100%; border-collapse:collapse; background:rgba(255,255,255,.2); }
+    .section-table th, .section-table td { padding:12px 14px; border-bottom:1px solid var(--line); text-align:left; font-size:12px; }
+    .section-table th { color:var(--muted); font-size:9px; text-transform:uppercase; letter-spacing:.12em; }
+    .status-pill { display:inline-block; border:1px solid var(--line); padding:3px 7px; font-size:9px; letter-spacing:.08em; text-transform:uppercase; }
+    .status-pill.attention { color:var(--critical); border-color:rgba(169,47,53,.45); }
+    .empty-note { border-left:3px solid var(--cyan); padding:13px 15px; background:rgba(255,255,255,.25); color:var(--muted); font-size:12px; line-height:1.5; margin-top:20px; }
+    .shell.section-mode { grid-template-rows:56px 1fr 0; }
+    .shell.section-mode .timeline { display:none; }
+    main.section-mode { grid-template-columns:260px 1fr; }
+    main.section-mode > aside:last-child { display:none; }
+
+    .steps { display:flex; align-items:center; width:100%; gap:5px; }
+    .step { flex:1; position:relative; min-width:0; color:var(--muted); font-size:9px; text-transform:uppercase; text-align:center; padding-top:17px; }
+    .step::before { content:""; position:absolute; top:4px; left:50%; width:8px; height:8px; border:1px solid var(--muted); border-radius:50%; background:var(--paper); z-index:2; }
+    .step::after { content:""; position:absolute; top:8px; left:-50%; width:100%; height:1px; background:var(--line); }
+    .step:first-child::after { display:none; }
+    .step.done::before { background:var(--ink); }
+    .step.current { color:var(--ink); font-weight:700; }
+    .step.current::before { background:var(--amber); box-shadow:0 0 9px var(--amber); }
+
+    .drawer { position:absolute; top:12%; right:0; width:min(430px, 80%); padding:20px; background:rgba(225,232,228,.96); border:1px solid var(--line); box-shadow:-20px 15px 50px var(--shadow); transform:translateX(105%); transition:transform .35s cubic-bezier(.2,.8,.2,1); z-index:9; }
+    .drawer.open { transform:translateX(-18px); }
+    .drawer header { display:flex; justify-content:space-between; align-items:center; }
+    .close { border:0; background:transparent; font-size:24px; cursor:pointer; }
+    .device-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:16px; }
+    .device-grid div { border:1px solid var(--line); padding:10px; font-size:11px; }
+    .device-grid b { display:block; margin-top:3px; }
+
+    @media (max-width: 900px) {
+      main { grid-template-columns: 190px 1fr; }
+      aside:last-child { display:none; }
+      .globe { width:min(66vw, 500px); }
+      .section-view { padding:26px 24px 45px; }
+      .section-cards { grid-template-columns:1fr 1fr; }
+      .top-status span:not(.live) { display:none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell" id="shell">
+    <header class="topbar">
+      <div class="brand">ATLAS <span>— OBSERVATÓRIO DE REDE</span></div>
+      <div class="mode-switch" aria-label="Fonte dos dados">
+        <button id="modeSimulated" class="active" type="button">SIMULADO</button>
+        <button id="modeApi" type="button">API LOCAL</button>
+      </div>
+      <div class="top-status"><span id="environmentLabel">UNIDADE SIMULADA 01</span><span id="coreStatus">NÚCLEO ESTÁVEL</span><span class="live" id="monitorStatus">MONITORAMENTO ATIVO</span></div>
+    </header>
+
+    <main id="mainContent">
+      <aside>
+        <div class="section-title">Infraestrutura</div>
+        <nav class="nav" aria-label="Navegação principal">
+          <button class="active" data-view="overview">Visão geral</button>
+          <button data-view="equipment">Equipamentos</button>
+          <button data-view="servers">Servidores</button>
+          <button data-view="network">Roteadores e switches</button>
+          <button data-view="printers">Impressoras</button>
+          <button data-view="services">Serviços</button>
+          <button data-view="incidents">Chamados</button>
+          <button data-view="history">Histórico</button>
+        </nav>
+        <div class="metrics">
+          <div class="metric"><strong id="metricMonitored">48</strong><span>Monitorados</span></div>
+          <div class="metric"><strong id="metricActive">45</strong><span>Ativos</span></div>
+          <div class="metric"><strong id="metricUnavailable" style="color:var(--critical)">3</strong><span>Incidentes ativos</span></div>
+          <div class="metric"><strong id="metricLatency">12 ms</strong><span>Latência</span></div>
+        </div>
+      </aside>
+
+      <section class="stage" aria-label="Topologia interativa da rede">
+        <div class="grid"></div>
+        <div class="incident-badge"><strong id="badgeTitle">3 dispositivos indisponíveis</strong><span id="badgeDetail">2 impressoras • 1 roteador</span></div>
+        <div class="globe-wrap" id="globeWrap">
+          <div class="globe" id="globe" aria-label="Globo da infraestrutura; arraste para girar">
+            <span class="link link-a"></span><span class="link link-b"></span>
+            <button class="node critical printer-a" data-device="Impressora Financeiro" aria-label="Impressora Financeiro indisponível"></button>
+            <button class="node critical router" data-device="Roteador Setor A" aria-label="Roteador Setor A indisponível"></button>
+            <button class="node critical printer-b" data-device="Impressora Atendimento" aria-label="Impressora Atendimento indisponível"></button>
+            <button class="node normal server" data-device="Servidor Local" aria-label="Servidor Local normal"></button>
+          </div>
+        </div>
+        <div class="hint">Arraste para girar • selecione um nó para analisar</div>
+
+        <article class="drawer" id="drawer" aria-live="polite">
+          <header><div><span class="kind">EQUIPAMENTO</span><h2 id="deviceName">Roteador Setor A</h2></div><button class="close" id="closeDrawer" aria-label="Fechar">×</button></header>
+          <div class="device-grid"><div>Estado<b>Indisponível</b></div><div>Último contato<b>há 02 min</b></div><div>Endereço simulado<b>10.0.0.1</b></div><div>Dependências<b>2 equipamentos</b></div></div>
+          <div class="ai"><span class="kind">INFERÊNCIA — REQUER CONFIRMAÇÃO</span><br>Este equipamento pode ser a causa comum da indisponibilidade das duas impressoras. Verifique primeiro energia, enlace e porta de uplink.</div>
+        </article>
+
+        <section class="section-view" id="sectionView" hidden aria-live="polite">
+          <header class="section-head">
+            <div><span class="kind" id="sectionKind">MÓDULO</span><h1 id="sectionHeading">Equipamentos</h1><p id="sectionDescription"></p></div>
+            <span class="source-badge" id="sectionSource">DADOS SIMULADOS</span>
+          </header>
+          <div class="section-cards" id="sectionCards"></div>
+          <table class="section-table">
+            <thead><tr><th>Item</th><th>Categoria</th><th>Estado</th><th>Última informação</th></tr></thead>
+            <tbody id="sectionRows"></tbody>
+          </table>
+          <div class="empty-note" id="sectionNote"></div>
+        </section>
+      </section>
+
+      <aside class="incident" id="incidentPanel">
+        <span class="kind">INCIDENTE CORRELACIONADO</span>
+        <h2 id="incidentTitle">ATLAS-2026-001</h2><div class="severity" id="incidentSeverity">CRÍTICO • CHAMADO SIMULADO</div>
+        <div class="facts">
+          <div class="fact"><span>Equipamentos afetados</span><b id="factAffected">3</b></div>
+          <div class="fact"><span>Classificação</span><b id="factClassification">Inferida</b></div>
+          <div class="fact"><span>Estado</span><b id="factState">Aberto</b></div>
+          <div class="fact"><span>Técnico</span><b id="factTechnician">Aguardando</b></div>
+        </div>
+        <div class="evidence"><span class="kind">MEDIDO</span><br><span id="evidenceText">Roteador sem resposta após três verificações. Duas impressoras perderam comunicação 12 segundos depois.</span></div>
+        <div class="ai"><span class="kind" id="analysisKind">ANÁLISE ATLAS • LLM SIMULADO</span><br><span id="analysisText">Existe uma provável causa comum. Recomenda-se verificar primeiro o roteador. Esta conclusão é uma recomendação, não um diagnóstico confirmado.</span></div>
+        <div class="actions"><button class="action primary">ASSUMIR CHAMADO</button><button class="action" id="analyze">ANALISAR</button><button class="action">VER EVIDÊNCIAS</button><button class="action">HISTÓRICO</button></div>
+      </aside>
+    </main>
+
+    <footer class="timeline" id="timeline">
+      <div class="steps">
+        <div class="step done">Detectado</div><div class="step done">Validado</div><div class="step done">Correlacionado</div>
+        <div class="step done">Chamado criado</div><div class="step current">Aguardando técnico</div><div class="step">Atendimento</div><div class="step">Normalizado</div>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+    class SimulatedLLMProvider {
+      async analyze(context) {
+        return { kind: "INFERENCE", confidence: "high", requiresHumanConfirmation: true,
+          summary: `${context.device} pode compartilhar a causa principal do incidente.` };
+      }
+    }
+
+    const globe = document.querySelector('#globe');
+    const drawer = document.querySelector('#drawer');
+    const deviceName = document.querySelector('#deviceName');
+    const llmProvider = new SimulatedLLMProvider();
+    const tenantId = '018f1d92-a0e1-7b22-8f13-f6783977f001';
+    const apiBase = location.protocol === 'file:' ? 'http://127.0.0.1:8080' : '';
+    let operatorToken = '';
+    let currentMode = 'SIMULATED';
+    let currentView = 'overview';
+    let apiCache = null;
+    let dragging = false, startX = 0, startY = 0, rx = -8, ry = 0;
+
+    const ui = Object.fromEntries([
+      'modeSimulated', 'modeApi', 'environmentLabel', 'coreStatus', 'monitorStatus',
+      'metricMonitored', 'metricActive', 'metricUnavailable', 'metricLatency',
+      'badgeTitle', 'badgeDetail', 'incidentTitle', 'incidentSeverity', 'factAffected',
+      'factClassification', 'factState', 'factTechnician', 'evidenceText',
+      'analysisKind', 'analysisText', 'shell', 'mainContent', 'sectionView',
+      'sectionKind', 'sectionHeading', 'sectionDescription', 'sectionSource',
+      'sectionCards', 'sectionRows', 'sectionNote'
+    ].map(id => [id, document.querySelector(`#${id}`)]));
+
+    const views = {
+      equipment: {
+        title: 'Equipamentos', description: 'Inventário dos ativos autorizados pelo gestor da rede.',
+        cards: [['48','Monitorados'],['45','Operacionais'],['3','Com atenção'],['100%','Identificados']],
+        rows: [['Servidor Local','Servidor','Normal','há 8 s'],['Roteador Setor A','Roteador','Atenção','há 12 s'],['Impressora Financeiro','Impressora','Indisponível','há 2 min']]
+      },
+      servers: {
+        title: 'Servidores', description: 'Disponibilidade e sinais operacionais dos servidores autorizados.',
+        cards: [['6','Cadastrados'],['6','Acessíveis'],['0','Críticos'],['8 ms','Latência média']],
+        rows: [['Servidor Local','Aplicação','Normal','há 8 s'],['Servidor de Arquivos','Arquivos','Normal','há 11 s'],['Servidor de Impressão','Impressão','Normal','há 14 s']]
+      },
+      network: {
+        title: 'Roteadores e switches', description: 'Conectividade, enlaces e topologia do ambiente monitorado.',
+        cards: [['8','Dispositivos'],['7','Acessíveis'],['1','Sem resposta'],['12 ms','Latência média']],
+        rows: [['Roteador Setor A','Gateway','Indisponível','há 2 min'],['Switch Principal','Switch','Normal','há 9 s'],['Access Point Recepção','Wi-Fi','Normal','há 16 s']]
+      },
+      printers: {
+        title: 'Impressoras', description: 'Comunicação, suprimentos e alertas informados pelas impressoras.',
+        cards: [['12','Cadastradas'],['10','Operacionais'],['2','Sem comunicação'],['1','Preventivo']],
+        rows: [['Impressora Financeiro','Laser','Indisponível','há 2 min'],['Impressora Atendimento','Laser','Indisponível','há 2 min'],['Impressora Diretoria','Multifuncional','Normal','há 18 s']]
+      },
+      services: {
+        title: 'Serviços', description: 'Serviços técnicos observados sem execução remota de comandos.',
+        cards: [['9','Observados'],['9','Disponíveis'],['0','Interrompidos'],['100%','Disponibilidade']],
+        rows: [['Servidor de impressão','TCP','Normal','há 14 s'],['DNS local','DNS','Normal','há 10 s'],['Gateway de internet','Conectividade','Normal','há 12 s']]
+      },
+      incidents: {
+        title: 'Chamados', description: 'Incidentes internos, evidências associadas e acompanhamento humano.',
+        cards: [['1','Aberto'],['0','Reconhecidos'],['0','Resolvidos hoje'],['3','Ativos afetados']],
+        rows: [['ATLAS-2026-001','Conectividade','Aberto','há 2 min']]
+      },
+      history: {
+        title: 'Histórico', description: 'Linha do tempo auditável de observações, triagens e decisões.',
+        cards: [['36','Eventos hoje'],['24','Medições'],['9','Triagens'],['3','Decisões']],
+        rows: [['Observação recebida','MEASURED','Registrado','agora'],['Triagem atualizada','INFERRED','Registrado','há 1 min'],['Incidente criado','Decisão','Registrado','há 2 min']]
+      }
+    };
+
+    function routeFromHash() {
+      const route = location.hash.replace('#', '');
+      return route === 'overview' || views[route] ? route || 'overview' : 'overview';
+    }
+
+    function appendCell(row, value, status = false) {
+      const cell = document.createElement('td');
+      if (status) {
+        const pill = document.createElement('span');
+        pill.className = `status-pill ${/atenção|indisponível|aberto/i.test(value) ? 'attention' : ''}`;
+        pill.textContent = value;
+        cell.appendChild(pill);
+      } else {
+        cell.textContent = value;
+      }
+      row.appendChild(cell);
+    }
+
+    function sectionData(view) {
+      const base = views[view];
+      if (currentMode !== 'API_LOCAL' || !apiCache) return base;
+      if (view === 'incidents') {
+        const active = apiCache.incidents.filter(item => item.status === 'OPEN' || item.status === 'ACKNOWLEDGED');
+        return {
+          ...base,
+          cards: [[String(active.length),'Ativos'],[String(apiCache.incidents.length),'Registrados'],[String(apiCache.status.bySeverity.HIGH || 0),'Prioridade alta'],['LOCAL','Origem']],
+          rows: apiCache.incidents.length
+            ? apiCache.incidents.map(item => [item.title, item.classification, item.status, item.updatedAt])
+            : [['Nenhum incidente interno','Control Plane','Clear','agora']]
+        };
+      }
+      const collectionByView = {
+        equipment: apiCache.assets,
+        servers: apiCache.servers,
+        network: apiCache.network,
+        printers: apiCache.printers
+      };
+      const collection = collectionByView[view];
+      if (!collection) return base;
+      const count = status => collection.filter(item => item.projection.status === status).length;
+      return {
+        ...base,
+        cards: [
+          [String(collection.length),'Cadastrados'],
+          [String(count('HEALTHY')),'Saudáveis'],
+          [String(count('ATTENTION') + count('UNREACHABLE')),'Com atenção'],
+          [String(collection.filter(item => item.projection.coverage === 'FULL').length),'Cobertura completa']
+        ],
+        rows: collection.length
+          ? collection.map(item => [
+              item.asset.name,
+              item.asset.kind,
+              item.projection.status,
+              item.projection.lastObservedAt || 'sem observação'
+            ])
+          : [['Nenhum ativo cadastrado','Inventário','Unknown','—']]
+      };
+    }
+
+    function renderSection(view) {
+      const data = sectionData(view);
+      ui.sectionHeading.textContent = data.title;
+      ui.sectionDescription.textContent = data.description;
+      ui.sectionKind.textContent = view === 'history' ? 'AUDITORIA' : 'MÓDULO OPERACIONAL';
+      ui.sectionSource.textContent = currentMode === 'API_LOCAL' ? 'API LOCAL' : 'DADOS SIMULADOS';
+      ui.sectionCards.replaceChildren(...data.cards.map(([value,label]) => {
+        const card = document.createElement('div'); card.className = 'section-card';
+        const strong = document.createElement('strong'); strong.textContent = value;
+        const span = document.createElement('span'); span.textContent = label;
+        card.append(strong, span); return card;
+      }));
+      ui.sectionRows.replaceChildren(...data.rows.map(columns => {
+        const row = document.createElement('tr');
+        columns.forEach((value,index) => appendCell(row, String(value), index === 2));
+        return row;
+      }));
+      const connectedViews = ['equipment', 'servers', 'network', 'printers', 'incidents'];
+      ui.sectionNote.textContent = currentMode === 'API_LOCAL' && connectedViews.includes(view)
+        ? 'Esta seção está conectada ao Inventory & Status Manager do Control Plane local.'
+        : 'Conteúdo demonstrativo. A navegação já está preparada para receber um provedor de dados da API local sem alterar a estrutura visual.';
+    }
+
+    function navigate(view) {
+      currentView = view;
+      const overview = view === 'overview';
+      ui.sectionView.hidden = overview;
+      ui.shell.classList.toggle('section-mode', !overview);
+      ui.mainContent.classList.toggle('section-mode', !overview);
+      document.querySelectorAll('.nav button[data-view]').forEach(button => {
+        const active = button.dataset.view === view;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-current', active ? 'page' : 'false');
+      });
+      drawer.classList.remove('open');
+      if (!overview) renderSection(view);
+    }
+
+    function selectMode(mode) {
+      currentMode = mode;
+      ui.modeSimulated.classList.toggle('active', mode === 'SIMULATED');
+      ui.modeApi.classList.toggle('active', mode === 'API_LOCAL');
+    }
+
+    function setNodes(critical) {
+      document.querySelectorAll('.node').forEach(node => {
+        if (node.classList.contains('server')) return;
+        node.classList.toggle('critical', critical);
+        node.classList.toggle('normal', !critical);
+      });
+    }
+
+    function renderSimulated() {
+      selectMode('SIMULATED');
+      ui.environmentLabel.textContent = 'UNIDADE SIMULADA 01';
+      ui.coreStatus.textContent = 'NÚCLEO ESTÁVEL';
+      ui.monitorStatus.textContent = 'MONITORAMENTO ATIVO';
+      ui.metricMonitored.textContent = '48';
+      ui.metricActive.textContent = '45';
+      ui.metricUnavailable.textContent = '3';
+      ui.metricLatency.textContent = '12 ms';
+      ui.badgeTitle.textContent = '3 dispositivos indisponíveis';
+      ui.badgeDetail.textContent = '2 impressoras • 1 roteador';
+      ui.incidentTitle.textContent = 'ATLAS-2026-001';
+      ui.incidentSeverity.textContent = 'CRÍTICO • CHAMADO SIMULADO';
+      ui.factAffected.textContent = '3';
+      ui.factClassification.textContent = 'Inferida';
+      ui.factState.textContent = 'Aberto';
+      ui.factTechnician.textContent = 'Aguardando';
+      ui.evidenceText.textContent = 'Roteador sem resposta após três verificações. Duas impressoras perderam comunicação 12 segundos depois.';
+      ui.analysisKind.textContent = 'ANÁLISE ATLAS • LLM SIMULADO';
+      ui.analysisText.textContent = 'Existe uma provável causa comum. Recomenda-se verificar primeiro o roteador. Esta conclusão é uma recomendação, não um diagnóstico confirmado.';
+      setNodes(true);
+      if (currentView !== 'overview') renderSection(currentView);
+    }
+
+    async function apiRequest(path) {
+      const response = await fetch(`${apiBase}${path}`, {
+        headers: { authorization: `Bearer ${operatorToken}` },
+        cache: 'no-store'
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error?.message || `API respondeu ${response.status}`);
+      }
+      return response.json();
+    }
+
+    async function renderApiLocal() {
+      if (location.protocol === 'file:') {
+        throw new Error('Para usar a API local, abra o painel pelo endereço http://127.0.0.1:8080. O arquivo direto permanece no modo simulado.');
+      }
+      if (!operatorToken) {
+        operatorToken = prompt('Informe o token local do operador. Ele será mantido somente na memória desta página:') || '';
+      }
+      if (!operatorToken) throw new Error('Token do operador não informado.');
+
+      const [status, incidentData, overview, assetsData, printersData, serversData, networkData] = await Promise.all([
+        apiRequest(`/v1/tenants/${tenantId}/status`),
+        apiRequest(`/v1/tenants/${tenantId}/incidents`),
+        apiRequest(`/v1/tenants/${tenantId}/overview`),
+        apiRequest(`/v1/tenants/${tenantId}/assets`),
+        apiRequest(`/v1/tenants/${tenantId}/printers`),
+        apiRequest(`/v1/tenants/${tenantId}/servers`),
+        apiRequest(`/v1/tenants/${tenantId}/network`)
+      ]);
+      const active = incidentData.incidents.filter(item => item.status === 'OPEN' || item.status === 'ACKNOWLEDGED');
+      const incident = active[0];
+      apiCache = {
+        status,
+        incidents: incidentData.incidents,
+        overview,
+        assets: assetsData.assets,
+        printers: printersData.assets,
+        servers: serversData.assets,
+        network: networkData.assets
+      };
+
+      selectMode('API_LOCAL');
+      ui.environmentLabel.textContent = 'AMBIENTE LOCAL';
+      const requiresAttention = overview.byStatus.ATTENTION + overview.byStatus.UNREACHABLE > 0;
+      ui.coreStatus.textContent = overview.safeToClaimHealthy
+        ? 'AMBIENTE SAUDÁVEL'
+        : requiresAttention
+          ? 'ATENÇÃO OPERACIONAL'
+          : 'COBERTURA INCOMPLETA';
+      ui.monitorStatus.textContent = 'API LOCAL CONECTADA';
+      ui.metricMonitored.textContent = String(overview.totalAssets);
+      ui.metricActive.textContent = String(overview.byStatus.HEALTHY);
+      ui.metricUnavailable.textContent = String(active.length);
+      ui.metricLatency.textContent = 'LOCAL';
+      ui.badgeTitle.textContent = overview.safeToClaimHealthy
+        ? 'Ambiente saudável com cobertura completa'
+        : `${overview.fullCoverage} de ${overview.totalAssets} ativos com cobertura completa`;
+      ui.badgeDetail.textContent = `${active.length} incidente${active.length === 1 ? '' : 's'} ativo${active.length === 1 ? '' : 's'} • dados do Control Plane`;
+
+      if (!incident) {
+        ui.incidentTitle.textContent = 'SEM INCIDENTES';
+        ui.incidentSeverity.textContent = 'STATUS INTERNO • CLEAR';
+        ui.factAffected.textContent = '0';
+        ui.factClassification.textContent = '—';
+        ui.factState.textContent = 'Estável';
+        ui.factTechnician.textContent = 'Não necessário';
+        ui.evidenceText.textContent = status.note;
+        ui.analysisKind.textContent = 'ATLAS • LIMITE DE CONHECIMENTO';
+        ui.analysisText.textContent = 'Nenhum incidente está aberto. Isso não comprova cobertura completa nem saúde absoluta do ambiente.';
+        setNodes(false);
+        if (currentView !== 'overview') renderSection(currentView);
+        return;
+      }
+
+      ui.incidentTitle.textContent = incident.title;
+      ui.incidentSeverity.textContent = `${incident.severity} • INCIDENTE INTERNO`;
+      ui.factAffected.textContent = incident.assetId ? '1' : '—';
+      ui.factClassification.textContent = incident.classification;
+      ui.factState.textContent = incident.status;
+      ui.factTechnician.textContent = 'Aguardando';
+      ui.evidenceText.textContent = `${incident.observationIds.length} observação(ões) vinculada(s) ao incidente.`;
+      ui.analysisKind.textContent = 'ATLAS • REGRA DETERMINÍSTICA';
+      ui.analysisText.textContent = 'O incidente foi criado pelo mecanismo de persistência. A causa física continua dependendo de confirmação humana.';
+      setNodes(true);
+      if (currentView !== 'overview') renderSection(currentView);
+    }
+
+    ui.modeSimulated.addEventListener('click', renderSimulated);
+    ui.modeApi.addEventListener('click', async () => {
+      ui.monitorStatus.textContent = 'CONECTANDO À API LOCAL';
+      try {
+        await renderApiLocal();
+      } catch (error) {
+        operatorToken = '';
+        renderSimulated();
+        ui.coreStatus.textContent = 'API LOCAL INDISPONÍVEL';
+        ui.monitorStatus.textContent = error.message;
+      }
+    });
+
+    document.querySelectorAll('.nav button[data-view]').forEach(button => {
+      button.addEventListener('click', () => {
+        const target = button.dataset.view;
+        if (location.hash === `#${target}`) navigate(target);
+        else location.hash = target;
+      });
+    });
+    window.addEventListener('hashchange', () => navigate(routeFromHash()));
+
+    document.querySelectorAll('.node').forEach(node => node.addEventListener('click', async event => {
+      event.stopPropagation();
+      deviceName.textContent = node.dataset.device;
+      await llmProvider.analyze({ device: node.dataset.device, incident: 'ATLAS-2026-001' });
+      drawer.classList.add('open');
+    }));
+
+    document.querySelector('#closeDrawer').addEventListener('click', () => drawer.classList.remove('open'));
+    document.querySelector('#analyze').addEventListener('click', () => {
+      deviceName.textContent = 'Roteador Setor A'; drawer.classList.add('open');
+    });
+    globe.addEventListener('pointerdown', event => {
+      dragging = true; startX = event.clientX; startY = event.clientY; globe.setPointerCapture(event.pointerId);
+    });
+    globe.addEventListener('pointermove', event => {
+      if (!dragging) return;
+      ry += (event.clientX - startX) * .25; rx -= (event.clientY - startY) * .2;
+      rx = Math.max(-18, Math.min(18, rx));
+      startX = event.clientX; startY = event.clientY;
+      const spin = ((ry % 360) + 360) % 360;
+      const surfaceOffset = Math.sin(spin * Math.PI / 180) * 28;
+      globe.style.setProperty('--tilt', `${rx}deg`);
+      globe.style.setProperty('--spin', `${spin}deg`);
+      globe.style.setProperty('--surface-x', `${surfaceOffset}px`);
+    });
+    globe.addEventListener('pointerup', () => dragging = false);
+    globe.addEventListener('pointercancel', () => dragging = false);
+    navigate(routeFromHash());
+  </script>
+</body>
+</html>

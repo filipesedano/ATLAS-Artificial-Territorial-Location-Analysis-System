@@ -1,0 +1,14 @@
+{
+  "name": "@atlas/control-plane",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "demo": "node src/demo.ts",
+    "start": "node src/server-entry.ts",
+    "test": "node --test test/*.test.ts"
+  },
+  "engines": {
+    "node": ">=22.18"
+  }
+}

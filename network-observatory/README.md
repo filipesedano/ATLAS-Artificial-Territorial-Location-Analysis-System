@@ -29,4 +29,8 @@ Monitorar a saúde de infraestruturas locais e remotas, correlacionar eventos, a
 
 `Collector local → Control Plane → Motor de regras → LLMProvider → recomendação → técnico humano`
 
-O protótipo visual existente permanece em `prototype/network-observatory/`.
+O protótipo visual existente permanece em `index.html`.
+
+## Demonstração local
+
+O roteiro totalmente simulado, restrito a `localhost`, está em [`docs/LOCAL_DEMO.md`](docs/LOCAL_DEMO.md).
