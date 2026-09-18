@@ -66,3 +66,34 @@ export class JsonFileObservationOutbox implements ObservationOutbox {
     renameSync(temporaryPath, this.filePath);
   }
 }
+
+/** Bounds serialized payload; preserves pending evidence instead of silent eviction. */
+export class BoundedObservationOutbox implements ObservationOutbox {
+  constructor(
+    privateStore: ObservationOutbox,
+    limits = { maxBytes: 10 * 1024 * 1024, maxAgeMs: 48 * 60 * 60 * 1000 },
+    clock: () => Date = () => new Date(),
+  ) {
+    if (!Number.isSafeInteger(limits.maxBytes) || limits.maxBytes <= 0 || !Number.isSafeInteger(limits.maxAgeMs) || limits.maxAgeMs <= 0) throw new Error("Invalid outbox limits");
+    this.store = privateStore; this.limits = { ...limits }; this.clock = clock;
+  }
+  private readonly store: ObservationOutbox;
+  private readonly limits: { maxBytes: number; maxAgeMs: number };
+  private readonly clock: () => Date;
+  status() {
+    const items = this.store.pending();
+    const bytes = Buffer.byteLength(JSON.stringify(items, null, 2));
+    const expired = items.some(item => this.clock().getTime() - Date.parse(item.observedAt) >= this.limits.maxAgeMs);
+    return { count: items.length, bytes, maxBytes: this.limits.maxBytes, expired, warning: expired || bytes >= this.limits.maxBytes * 0.8 };
+  }
+  enqueue(observations: readonly Observation[]): void {
+    const merged = new Map(this.store.pending().map(item => [item.idempotencyKey, item]));
+    for (const item of observations) { assertObservation(item); if (!merged.has(item.idempotencyKey)) merged.set(item.idempotencyKey, item); }
+    const items = [...merged.values()];
+    if (this.status().expired || items.some(item => this.clock().getTime() - Date.parse(item.observedAt) >= this.limits.maxAgeMs)) throw new Error("OUTBOX_AGE_LIMIT: synchronize or explicitly review pending records before collecting");
+    if (Buffer.byteLength(JSON.stringify(items, null, 2)) > this.limits.maxBytes) throw new Error("OUTBOX_SIZE_LIMIT: pending records preserved; collection blocked");
+    this.store.enqueue(observations);
+  }
+  pending(): readonly Observation[] { return this.store.pending(); }
+  acknowledge(keys: readonly string[]): void { this.store.acknowledge(keys); }
+}

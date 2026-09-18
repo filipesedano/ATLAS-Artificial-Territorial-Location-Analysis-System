@@ -1,3 +1,4 @@
+import { simulatedPolicy, type CollectionPolicy } from "../../../packages/contracts/src/index.ts";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -32,7 +33,11 @@ const localDatabase = new LocalDatabase(databasePath);
 const incidentRepository = new SqliteIncidentRepository(localDatabase);
 const observationRepository = new SqliteObservationRepository(localDatabase);
 const triageEngine = new PrinterTriageEngine();
-const registeredCollector = { id: collectorId, tenantId, siteId, status: "ACTIVE" as const };
+const collectionPolicy: CollectionPolicy = process.env.ATLAS_COLLECTION_POLICY_FILE
+  ? JSON.parse(readFileSync(process.env.ATLAS_COLLECTION_POLICY_FILE, "utf8"))
+  : simulatedPolicy(tenantId, siteId, collectorId, "018f1d92-a0e1-7b22-8f13-f6783977f004");
+
+const registeredCollector = { id: collectorId, tenantId, siteId, status: "ACTIVE" as const, policy: collectionPolicy };
 const controlPlane = new MinimalControlPlane(
   [registeredCollector],
   observationRepository,
@@ -130,6 +135,7 @@ const server = createAtlasHttpServer({
   incidentRepository,
   collectorCredentials: [{ collectorId, token: collectorToken }],
   operatorToken,
+  operatorTenantIds: [tenantId],
   inventoryManager,
   statusProjector,
   dashboardHtml: readFileSync(

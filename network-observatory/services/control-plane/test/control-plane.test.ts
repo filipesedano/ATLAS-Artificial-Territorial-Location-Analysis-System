@@ -1,3 +1,4 @@
+import { simulatedPolicy } from "../../../packages/contracts/src/index.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -60,6 +61,7 @@ function controlPlane() {
         tenantId: IDS.tenantA,
         siteId: IDS.site,
         status: "ACTIVE",
+        policy: simulatedPolicy(IDS.tenantA, IDS.site, IDS.collector, IDS.asset),
       },
     ],
     new InMemoryObservationRepository(),
@@ -177,6 +179,7 @@ test("runs the complete Collector to Control Plane triage flow", async () => {
       siteId: IDS.site,
       name: "Collector Matriz",
       authorizedAssetIds: [IDS.asset],
+      policy: simulatedPolicy(IDS.tenantA, IDS.site, IDS.collector, IDS.asset),
     },
     new SimulatorProbe(),
     new InMemoryObservationOutbox(),

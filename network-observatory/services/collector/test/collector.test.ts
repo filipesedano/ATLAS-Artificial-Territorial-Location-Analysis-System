@@ -1,3 +1,4 @@
+import { simulatedPolicy } from "../../../packages/contracts/src/index.ts";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -48,6 +49,7 @@ function collector(outbox = new InMemoryObservationOutbox()): CollectorSimulator
       siteId: IDS.siteA,
       name: "Collector A",
       authorizedAssetIds: [IDS.asset],
+      policy: simulatedPolicy(IDS.tenantA, IDS.siteA, IDS.collector, IDS.asset),
     },
     new SimulatorProbe(),
     outbox,

@@ -1,3 +1,4 @@
+import { answerAssetQuestion, type AgentQuestion } from "./readonly-agent.ts";
 import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
@@ -20,6 +21,7 @@ export interface AtlasHttpServerOptions {
   incidentRepository: IncidentRepository;
   collectorCredentials: readonly CollectorCredential[];
   operatorToken: string;
+  operatorTenantIds: readonly UUID[];
   dashboardHtml?: string;
   inventoryManager?: InventoryManager;
   statusProjector?: StatusProjector;
@@ -129,6 +131,9 @@ function mapError(error: unknown): HttpError {
 }
 
 export function createAtlasHttpServer(options: AtlasHttpServerOptions): Server {
+  if (!options.operatorToken || options.collectorCredentials.some(item => item.token === options.operatorToken)) {
+    throw new Error("Reader and collector credentials must be nonempty and distinct");
+  }
   return createServer(async (request, response) => {
     try {
       const method = request.method ?? "GET";
@@ -199,11 +204,46 @@ export function createAtlasHttpServer(options: AtlasHttpServerOptions): Server {
         return;
       }
 
+      const assistantMatch = url.pathname.match(
+        /^\/v1\/tenants\/([0-9a-f-]+)\/assets\/([0-9a-f-]+)\/assistant$/i,
+      );
+      if (method === "GET" && assistantMatch) {
+        requireOperator(request, options.operatorToken);
+        const [, tenantId, assetId] = assistantMatch;
+        if (!options.operatorTenantIds?.includes(tenantId)) {
+          throw new HttpError(403, "TENANT_FORBIDDEN", "Reader is not authorized for this tenant");
+        }
+        if (!options.inventoryManager) throw new HttpError(503, "INVENTORY_UNAVAILABLE", "Inventory is unavailable");
+        if (!options.inventoryManager.asset(tenantId, assetId)) throw new HttpError(404, "ASSET_NOT_FOUND", "Asset was not found");
+        const question = url.searchParams.get("question") ?? "status";
+        if (!["status", "evidence", "limits", "policy"].includes(question)) {
+          throw new HttpError(400, "QUESTION_UNSUPPORTED", "Only status, evidence, limits and policy are supported");
+        }
+        if (question === "policy") {
+          const policies = options.controlPlane.collectionPolicySummary(tenantId, assetId);
+          sendJson(response, 200, {
+            tenantId, assetId, contractVersion: "atlas-reader/0.1", policyVersion: "readonly/0.1",
+            provider: "DETERMINISTIC", classification: "INDETERMINATE", execution: "NONE",
+            observationIds: [], generatedAt: new Date().toISOString(),
+            answer: policies.length ? `Configuração de autorização no servidor (não comprova coleta ativa): ${JSON.stringify(policies)}` : "Nenhuma política cadastrada para este equipamento. A coleta deve permanecer bloqueada.",
+          });
+          return;
+        }
+        sendJson(response, 200, {
+          tenantId, assetId,
+          ...answerAssetQuestion(question as AgentQuestion, options.controlPlane.readObservations(tenantId, assetId)),
+        });
+        return;
+      }
+
       const tenantIncidentsMatch = url.pathname.match(
         /^\/v1\/tenants\/([0-9a-f-]+)\/incidents$/i,
       );
       if (method === "GET" && tenantIncidentsMatch) {
         requireOperator(request, options.operatorToken);
+        if (!options.operatorTenantIds?.includes(url.pathname.split("/")[3])) {
+          throw new HttpError(403, "TENANT_FORBIDDEN", "Reader is not authorized for this tenant");
+        }
         const tenantId = tenantIncidentsMatch[1];
         const incidents = options.incidentRepository.listByTenant(tenantId);
         sendJson(response, 200, { tenantId, incidents });
@@ -215,6 +255,9 @@ export function createAtlasHttpServer(options: AtlasHttpServerOptions): Server {
       );
       if (method === "GET" && tenantOverviewMatch) {
         requireOperator(request, options.operatorToken);
+        if (!options.operatorTenantIds?.includes(url.pathname.split("/")[3])) {
+          throw new HttpError(403, "TENANT_FORBIDDEN", "Reader is not authorized for this tenant");
+        }
         if (!options.statusProjector) {
           throw new HttpError(503, "STATUS_PROJECTOR_UNAVAILABLE", "Status projection is unavailable");
         }
@@ -228,6 +271,9 @@ export function createAtlasHttpServer(options: AtlasHttpServerOptions): Server {
       );
       if (method === "GET" && assetDetailMatch) {
         requireOperator(request, options.operatorToken);
+        if (!options.operatorTenantIds?.includes(url.pathname.split("/")[3])) {
+          throw new HttpError(403, "TENANT_FORBIDDEN", "Reader is not authorized for this tenant");
+        }
         if (!options.inventoryManager || !options.statusProjector) {
           throw new HttpError(503, "INVENTORY_UNAVAILABLE", "Inventory is unavailable");
         }
@@ -235,6 +281,9 @@ export function createAtlasHttpServer(options: AtlasHttpServerOptions): Server {
         const managed = options.inventoryManager.asset(tenantId, assetId);
         if (!managed) throw new HttpError(404, "ASSET_NOT_FOUND", "Asset was not found");
         sendJson(response, 200, {
+          contractVersion: "asset-preview/1.0",
+          source: { transport: "API_LOCAL", acquisition: "UNVERIFIED" },
+          observations: options.controlPlane.readObservations(tenantId, assetId),
           asset: managed.asset,
           monitoring: {
             collectorId: managed.collectorId,
@@ -253,6 +302,9 @@ export function createAtlasHttpServer(options: AtlasHttpServerOptions): Server {
       );
       if (method === "GET" && assetListMatch) {
         requireOperator(request, options.operatorToken);
+        if (!options.operatorTenantIds?.includes(url.pathname.split("/")[3])) {
+          throw new HttpError(403, "TENANT_FORBIDDEN", "Reader is not authorized for this tenant");
+        }
         if (!options.inventoryManager || !options.statusProjector) {
           throw new HttpError(503, "INVENTORY_UNAVAILABLE", "Inventory is unavailable");
         }
@@ -293,6 +345,9 @@ export function createAtlasHttpServer(options: AtlasHttpServerOptions): Server {
       );
       if (method === "GET" && tenantStatusMatch) {
         requireOperator(request, options.operatorToken);
+        if (!options.operatorTenantIds?.includes(url.pathname.split("/")[3])) {
+          throw new HttpError(403, "TENANT_FORBIDDEN", "Reader is not authorized for this tenant");
+        }
         const tenantId = tenantStatusMatch[1];
         const incidents = options.incidentRepository.listByTenant(tenantId);
         const active = incidents.filter(

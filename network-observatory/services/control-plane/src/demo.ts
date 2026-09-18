@@ -1,3 +1,4 @@
+import { simulatedPolicy } from "../../../packages/contracts/src/index.ts";
 import type { Observation } from "../../../packages/contracts/src/index.ts";
 import {
   IncidentManager,
@@ -32,7 +33,7 @@ function measured(index: number, kind: string, value: Observation["value"]): Obs
 }
 
 const plane = new MinimalControlPlane(
-  [{ id: ids.collector, tenantId: ids.tenant, siteId: ids.site, status: "ACTIVE" }],
+  [{ id: ids.collector, tenantId: ids.tenant, siteId: ids.site, status: "ACTIVE", policy: simulatedPolicy(ids.tenant, ids.site, ids.collector, ids.asset) }],
   new InMemoryObservationRepository(),
   new PrinterTriageEngine(() => new Date(timestamp)),
   () => new Date(timestamp),

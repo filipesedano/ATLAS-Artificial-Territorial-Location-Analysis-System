@@ -1,3 +1,4 @@
+import type { CollectionPolicy } from "../../../packages/contracts/src/index.ts";
 import type {
   ISODateTime,
   Observation,
@@ -6,6 +7,7 @@ import type {
 } from "../../../packages/contracts/src/index.ts";
 
 export interface RegisteredCollector {
+  policy?: CollectionPolicy;
   id: UUID;
   tenantId: UUID;
   siteId: UUID;

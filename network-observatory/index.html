@@ -163,6 +163,9 @@
       .section-cards { grid-template-columns:1fr 1fr; }
       .top-status span:not(.live) { display:none; }
     }
+  .drawer { max-height: 85%; overflow: auto; }
+    [hidden] { display: none !important; }
+    .node:focus-visible { outline: 3px solid #111; outline-offset: 5px; }
   </style>
 </head>
 <body>
@@ -211,10 +214,9 @@
         </div>
         <div class="hint">Arraste para girar • selecione um nó para analisar</div>
 
-        <article class="drawer" id="drawer" aria-live="polite">
+        <article class="drawer" id="drawer" hidden aria-live="polite">
           <header><div><span class="kind">EQUIPAMENTO</span><h2 id="deviceName">Roteador Setor A</h2></div><button class="close" id="closeDrawer" aria-label="Fechar">×</button></header>
-          <div class="device-grid"><div>Estado<b>Indisponível</b></div><div>Último contato<b>há 02 min</b></div><div>Endereço simulado<b>10.0.0.1</b></div><div>Dependências<b>2 equipamentos</b></div></div>
-          <div class="ai"><span class="kind">INFERÊNCIA — REQUER CONFIRMAÇÃO</span><br>Este equipamento pode ser a causa comum da indisponibilidade das duas impressoras. Verifique primeiro energia, enlace e porta de uplink.</div>
+          <div id="deviceDetails"></div>
         </article>
 
         <section class="section-view" id="sectionView" hidden aria-live="polite">
@@ -257,7 +259,7 @@
   <script>
     class SimulatedLLMProvider {
       async analyze(context) {
-        return { kind: "INFERENCE", confidence: "high", requiresHumanConfirmation: true,
+        return { kind: "INFERRED", confidence: "high", requiresHumanConfirmation: true,
           summary: `${context.device} pode compartilhar a causa principal do incidente.` };
       }
     }
@@ -386,7 +388,7 @@
       ui.sectionHeading.textContent = data.title;
       ui.sectionDescription.textContent = data.description;
       ui.sectionKind.textContent = view === 'history' ? 'AUDITORIA' : 'MÓDULO OPERACIONAL';
-      ui.sectionSource.textContent = currentMode === 'API_LOCAL' ? 'API LOCAL' : 'DADOS SIMULADOS';
+      ui.sectionSource.textContent = currentMode === 'API_LOCAL' && !['services', 'history'].includes(view) ? 'API LOCAL • ORIGEM NÃO VERIFICADA' : 'DADOS SIMULADOS';
       ui.sectionCards.replaceChildren(...data.cards.map(([value,label]) => {
         const card = document.createElement('div'); card.className = 'section-card';
         const strong = document.createElement('strong'); strong.textContent = value;
@@ -415,22 +417,115 @@
         button.classList.toggle('active', active);
         button.setAttribute('aria-current', active ? 'page' : 'false');
       });
-      drawer.classList.remove('open');
+      closePreview(false);
       if (!overview) renderSection(view);
     }
 
     function selectMode(mode) {
+      closePreview(false);
       currentMode = mode;
+      document.querySelector('#timeline').hidden = mode === 'API_LOCAL';
+      document.querySelectorAll('.link').forEach(link => link.hidden = mode === 'API_LOCAL');
       ui.modeSimulated.classList.toggle('active', mode === 'SIMULATED');
       ui.modeApi.classList.toggle('active', mode === 'API_LOCAL');
     }
 
-    function setNodes(critical) {
-      document.querySelectorAll('.node').forEach(node => {
-        if (node.classList.contains('server')) return;
-        node.classList.toggle('critical', critical);
-        node.classList.toggle('normal', !critical);
+    function setNodes() {
+      globe.querySelectorAll('.node').forEach(node => node.remove());
+      const items = currentMode === 'API_LOCAL' ? apiCache.assets : [
+        { asset: { id: 'demo-printer', name: 'Impressora demonstrativa', kind: 'PRINTER' } },
+        { asset: { id: 'demo-server', name: 'Servidor demonstrativo', kind: 'SERVER' } }
+      ];
+      items.forEach((item, index) => {
+        const node = document.createElement('button');
+        const state = item.projection?.status || 'UNKNOWN';
+        node.className = `node ${['ATTENTION', 'UNREACHABLE'].includes(state) ? 'critical' : 'normal'}`;
+        node.style.left = `${50 + 32 * Math.cos(index * 2 * Math.PI / items.length)}%`;
+        node.style.top = `${50 + 28 * Math.sin(index * 2 * Math.PI / items.length)}%`;
+        if (state !== 'HEALTHY' && !node.classList.contains('critical')) node.style.background = '#9ba3a8';
+        node.dataset.assetId = item.asset.id;
+        node.setAttribute('aria-label', `${item.asset.name}: ${state}. Abrir detalhes`);
+        node.addEventListener('click', () => openPreview(item.asset, node));
+        globe.appendChild(node);
       });
+    }
+
+    let previewGeneration = 0;
+    let previewTrigger;
+    function closePreview(restore = true) {
+      previewGeneration++;
+      drawer.classList.remove('open');
+      drawer.hidden = true;
+      if (restore) previewTrigger?.focus();
+    }
+    async function openPreview(asset, trigger) {
+      const generation = ++previewGeneration;
+      previewTrigger = trigger;
+      deviceName.textContent = asset.name;
+      const details = document.querySelector('#deviceDetails');
+      details.textContent = 'Carregando informações…';
+      drawer.hidden = false;
+      drawer.classList.add('open');
+      document.querySelector('#closeDrawer').focus();
+      if (currentMode !== 'API_LOCAL') {
+        details.textContent = 'DADOS SIMULADOS • INDETERMINATE. Exemplo visual; nenhum equipamento real foi observado.';
+        return;
+      }
+      try {
+        const data = await apiRequest(`/v1/tenants/${tenantId}/assets/${encodeURIComponent(asset.id)}`);
+        if (generation !== previewGeneration) return;
+        if (data.asset.id !== asset.id || data.asset.tenantId !== tenantId) throw new Error('Resposta fora do escopo solicitado.');
+        details.replaceChildren();
+        const fields = [
+          ['Tipo', data.asset.kind], ['IP cadastrado (não comprova observação)', data.monitoring.expectedAddress || 'Não informado'],
+          ['Estado calculado', data.projection.status], ['Última observação', data.projection.lastObservedAt || 'Ausente'],
+          ['Transporte / origem', 'API LOCAL / origem de aquisição não verificada'],
+          ['Classificação da síntese', ['UNKNOWN', 'STALE', 'MAINTENANCE', 'RETIRED'].includes(data.projection.status) ? 'INDETERMINATE' : 'INFERRED'],
+          ['Limite', data.projection.reason]
+        ];
+        fields.forEach(([label, value]) => {
+          const p = document.createElement('p'); p.textContent = `${label}: ${value}`; details.appendChild(p);
+        });
+        const evidence = document.createElement('details');
+        const summary = document.createElement('summary');
+        summary.textContent = `Observações de suporte (até 100): ${data.observations.length}`;
+        evidence.appendChild(summary);
+        data.observations.forEach(item => {
+          const p = document.createElement('p');
+          p.textContent = `${item.observedAt} • ${item.kind}: ${item.value} • ${item.provenance} • ID ${item.id}`;
+          evidence.appendChild(p);
+        });
+        details.appendChild(evidence);
+        const assistant = document.createElement('section');
+        const heading = document.createElement('h3');
+        heading.textContent = 'Converse com o ATLAS • respostas por regras';
+        const reply = document.createElement('p');
+        reply.setAttribute('role', 'status');
+        reply.textContent = 'Escolha uma pergunta. Nenhum comando será executado.';
+        let questionSequence = 0;
+        assistant.appendChild(heading);
+        for (const [question, label] of [['status', 'O que sabemos agora?'], ['evidence', 'Quais são as evidências?'], ['limits', 'O que você pode fazer?'], ['policy', 'O que está autorizado a coletar?']]) {
+          const button = document.createElement('button');
+          button.className = 'action'; button.textContent = label;
+          button.addEventListener('click', async () => {
+            const sequence = ++questionSequence;
+            reply.textContent = 'Consultando registros autorizados…';
+            try {
+              const result = await apiRequest(`/v1/tenants/${tenantId}/assets/${encodeURIComponent(asset.id)}/assistant?question=${question}`);
+              if (generation !== previewGeneration || sequence !== questionSequence) return;
+              if (result.tenantId !== tenantId || result.assetId !== asset.id) throw new Error('Resposta fora do escopo.');
+              reply.textContent = `${result.classification} • ${result.answer} Referências: ${result.observationIds.join(', ') || 'nenhuma'}.`;
+            } catch (error) {
+              if (generation === previewGeneration && sequence === questionSequence) reply.textContent = `INDETERMINATE • Consulta indisponível: ${error.message}`;
+            }
+          });
+          assistant.appendChild(button);
+        }
+        assistant.appendChild(reply);
+        details.appendChild(assistant);
+      } catch (error) {
+        if (generation === previewGeneration) details.textContent = `INDETERMINATE • Não foi possível consultar o equipamento: ${error.message}`;
+      }
     }
 
     function renderSimulated() {
@@ -522,8 +617,8 @@
         ui.incidentSeverity.textContent = 'STATUS INTERNO • CLEAR';
         ui.factAffected.textContent = '0';
         ui.factClassification.textContent = '—';
-        ui.factState.textContent = 'Estável';
-        ui.factTechnician.textContent = 'Não necessário';
+        ui.factState.textContent = 'Sem incidentes abertos';
+        ui.factTechnician.textContent = 'Não avaliado';
         ui.evidenceText.textContent = status.note;
         ui.analysisKind.textContent = 'ATLAS • LIMITE DE CONHECIMENTO';
         ui.analysisText.textContent = 'Nenhum incidente está aberto. Isso não comprova cobertura completa nem saúde absoluta do ambiente.';
@@ -567,18 +662,14 @@
     });
     window.addEventListener('hashchange', () => navigate(routeFromHash()));
 
-    document.querySelectorAll('.node').forEach(node => node.addEventListener('click', async event => {
-      event.stopPropagation();
-      deviceName.textContent = node.dataset.device;
-      await llmProvider.analyze({ device: node.dataset.device, incident: 'ATLAS-2026-001' });
-      drawer.classList.add('open');
-    }));
-
-    document.querySelector('#closeDrawer').addEventListener('click', () => drawer.classList.remove('open'));
-    document.querySelector('#analyze').addEventListener('click', () => {
-      deviceName.textContent = 'Roteador Setor A'; drawer.classList.add('open');
+    document.querySelector('#closeDrawer').addEventListener('click', () => closePreview());
+    window.addEventListener('keydown', event => { if (event.key === 'Escape') closePreview(); });
+    document.querySelectorAll('.actions button').forEach(button => {
+      button.disabled = true;
+      button.title = 'Ação não implementada nesta prévia somente leitura';
     });
     globe.addEventListener('pointerdown', event => {
+      if (event.target.closest('button')) return;
       dragging = true; startX = event.clientX; startY = event.clientY; globe.setPointerCapture(event.pointerId);
     });
     globe.addEventListener('pointermove', event => {
@@ -594,6 +685,7 @@
     });
     globe.addEventListener('pointerup', () => dragging = false);
     globe.addEventListener('pointercancel', () => dragging = false);
+    renderSimulated();
     navigate(routeFromHash());
   </script>
 </body>

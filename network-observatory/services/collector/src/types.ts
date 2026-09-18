@@ -1,3 +1,4 @@
+import type { CollectionPolicy } from "../../../packages/contracts/src/index.ts";
 import type { Asset, Observation, UUID } from "../../../packages/contracts/src/index.ts";
 
 export type PrinterScenario =
@@ -8,6 +9,7 @@ export type PrinterScenario =
   | "TONER_LOW";
 
 export interface CollectorIdentity {
+  policy?: CollectionPolicy;
   id: UUID;
   tenantId: UUID;
   siteId: UUID;
