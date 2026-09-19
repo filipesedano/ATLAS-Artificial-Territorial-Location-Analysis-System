@@ -1,7 +1,7 @@
-import { simulatedPolicy, type CollectionPolicy } from "../../../packages/contracts/src/index.ts";
+import { loadConfig } from '../../../tools/runtime-config.mjs';
+import { acquireInstanceLock } from '../../../tools/instance-lock.mjs';
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 
 import {
   createAtlasHttpServer,
@@ -16,27 +16,19 @@ import {
   StatusProjector,
 } from "./index.ts";
 
-const operatorToken = process.env.ATLAS_OPERATOR_TOKEN;
-const collectorToken = process.env.ATLAS_COLLECTOR_TOKEN;
-if (!operatorToken || !collectorToken) {
-  throw new Error("ATLAS_OPERATOR_TOKEN and ATLAS_COLLECTOR_TOKEN are required");
+const config = loadConfig();
+const { operatorToken, collectorToken, collectorId, tenantId, siteId, port, databasePath, policy: collectionPolicy } = config;
+if (!operatorToken || !collectorToken || operatorToken === collectorToken) {
+  throw new Error("Distinct ATLAS_OPERATOR_TOKEN and ATLAS_COLLECTOR_TOKEN are required");
 }
 
-const collectorId =
-  process.env.ATLAS_COLLECTOR_ID ?? "018f1d92-a0e1-7b22-8f13-f6783977f005";
-const tenantId = process.env.ATLAS_TENANT_ID ?? "018f1d92-a0e1-7b22-8f13-f6783977f001";
-const siteId = process.env.ATLAS_SITE_ID ?? "018f1d92-a0e1-7b22-8f13-f6783977f003";
-const port = Number(process.env.ATLAS_HTTP_PORT ?? "8080");
-const databasePath = process.env.ATLAS_DB_PATH ?? resolve(process.cwd(), "data", "atlas-local.db");
-
+const instanceLock = acquireInstanceLock(databasePath);
+// Exclusive ownership is acquired before SQLite is opened or migrated.
+process.once('exit', () => { try { instanceLock.release(); } catch {} });
 const localDatabase = new LocalDatabase(databasePath);
 const incidentRepository = new SqliteIncidentRepository(localDatabase);
 const observationRepository = new SqliteObservationRepository(localDatabase);
 const triageEngine = new PrinterTriageEngine();
-const collectionPolicy: CollectionPolicy = process.env.ATLAS_COLLECTION_POLICY_FILE
-  ? JSON.parse(readFileSync(process.env.ATLAS_COLLECTION_POLICY_FILE, "utf8"))
-  : simulatedPolicy(tenantId, siteId, collectorId, "018f1d92-a0e1-7b22-8f13-f6783977f004");
-
 const registeredCollector = { id: collectorId, tenantId, siteId, status: "ACTIVE" as const, policy: collectionPolicy };
 const controlPlane = new MinimalControlPlane(
   [registeredCollector],
@@ -144,9 +136,17 @@ const server = createAtlasHttpServer({
   ),
 });
 
+server.once("error", () => {
+  console.error("ATLAS não conseguiu escutar na porta configurada.");
+  localDatabase.close(); instanceLock.release(); process.exitCode = 1;
+  if (process.connected) process.disconnect();
+});
 server.listen(port, "127.0.0.1", () => {
   console.log(`ATLAS HTTP local v0.1 em http://127.0.0.1:${port}`);
-  console.log(`SQLite: ${databasePath} — integridade: ${localDatabase.integrityCheck()}`);
+  const integrity = localDatabase.integrityCheck();
+  console.log(`SQLite — integridade: ${integrity}`);
+  if (integrity !== "ok") { process.exitCode = 1; shutdown("integrity-failed"); return; }
+  process.send?.({type:"atlas-ready", port});
 });
 
 let shuttingDown = false;
@@ -156,9 +156,14 @@ function shutdown(signal: string): void {
   console.log(`Encerramento seguro solicitado por ${signal}.`);
   server.close(() => {
     localDatabase.close();
+    instanceLock.release();
+    if (process.connected) process.disconnect();
     console.log("ATLAS encerrado; estado local preservado.");
   });
 }
 
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
+
+process.on("message", message => { if (message?.type === "atlas-stop") shutdown("launcher"); });
+process.on("disconnect", () => shutdown("launcher-disconnected"));
