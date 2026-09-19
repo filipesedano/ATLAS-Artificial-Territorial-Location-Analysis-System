@@ -257,6 +257,32 @@
   </div>
 
   <script>
+    // VOICE_DRAFT_START: deterministic rehearsal; no audio capture or transcription.
+    class VoiceDraft {
+      constructor() { this.cancel(); }
+      cancel() { this.text = ''; this.intent = null; this.accepted = false; this.reviewed = false; }
+      accept(value) { this.cancel(); this.accepted = value === true; }
+      edit(text) { this.text = String(text).slice(0, 300); this.intent = null; this.reviewed = false; }
+      review() {
+        if (!this.accepted) return null;
+        const normalized = this.text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim().replace(/[?.!]$/, '').replace(/\s+/g, ' ');
+        const questions = {
+          'como esta este equipamento': 'status',
+          'quais sao as evidencias': 'evidence',
+          'o que voce pode fazer': 'limits',
+          'o que esta autorizado a coletar': 'policy'
+        };
+        this.intent = Object.hasOwn(questions, normalized) ? questions[normalized] : null;
+        this.reviewed = this.intent !== null;
+        return this.intent;
+      }
+      confirm() {
+        if (!this.accepted || !this.reviewed || !this.intent) return null;
+        const intent = this.intent; this.cancel(); return intent;
+      }
+    }
+    // VOICE_DRAFT_END
+
     class SimulatedLLMProvider {
       async analyze(context) {
         return { kind: "INFERRED", confidence: "high", requiresHumanConfirmation: true,
@@ -452,13 +478,16 @@
 
     let previewGeneration = 0;
     let previewTrigger;
+    let cancelVoiceDraft = () => {};
     function closePreview(restore = true) {
       previewGeneration++;
+      cancelVoiceDraft();
       drawer.classList.remove('open');
       drawer.hidden = true;
       if (restore) previewTrigger?.focus();
     }
     async function openPreview(asset, trigger) {
+      cancelVoiceDraft();
       const generation = ++previewGeneration;
       previewTrigger = trigger;
       deviceName.textContent = asset.name;
@@ -504,23 +533,73 @@
         reply.textContent = 'Escolha uma pergunta. Nenhum comando será executado.';
         let questionSequence = 0;
         assistant.appendChild(heading);
+        const ask = async question => {
+          const sequence = ++questionSequence;
+          reply.textContent = 'Consultando registros autorizados…';
+          try {
+            const result = await apiRequest(`/v1/tenants/${tenantId}/assets/${encodeURIComponent(asset.id)}/assistant?question=${question}`);
+            if (generation !== previewGeneration || sequence !== questionSequence) return;
+            if (result.tenantId !== tenantId || result.assetId !== asset.id) throw new Error('Resposta fora do escopo.');
+            reply.textContent = `${result.classification} • ${result.answer} Referências: ${result.observationIds.join(', ') || 'nenhuma'}.`;
+          } catch (error) {
+            if (generation === previewGeneration && sequence === questionSequence) reply.textContent = `INDETERMINATE • Consulta indisponível: ${error.message}`;
+          }
+        };
         for (const [question, label] of [['status', 'O que sabemos agora?'], ['evidence', 'Quais são as evidências?'], ['limits', 'O que você pode fazer?'], ['policy', 'O que está autorizado a coletar?']]) {
           const button = document.createElement('button');
           button.className = 'action'; button.textContent = label;
-          button.addEventListener('click', async () => {
-            const sequence = ++questionSequence;
-            reply.textContent = 'Consultando registros autorizados…';
-            try {
-              const result = await apiRequest(`/v1/tenants/${tenantId}/assets/${encodeURIComponent(asset.id)}/assistant?question=${question}`);
-              if (generation !== previewGeneration || sequence !== questionSequence) return;
-              if (result.tenantId !== tenantId || result.assetId !== asset.id) throw new Error('Resposta fora do escopo.');
-              reply.textContent = `${result.classification} • ${result.answer} Referências: ${result.observationIds.join(', ') || 'nenhuma'}.`;
-            } catch (error) {
-              if (generation === previewGeneration && sequence === questionSequence) reply.textContent = `INDETERMINATE • Consulta indisponível: ${error.message}`;
-            }
-          });
+          button.addEventListener('click', () => ask(question));
           assistant.appendChild(button);
         }
+        const voiceButton = document.createElement('button');
+        voiceButton.className = 'action'; voiceButton.textContent = 'Falar com o ATLAS • preparar';
+        voiceButton.setAttribute('aria-expanded', 'false');
+        const voicePanel = document.createElement('section'); voicePanel.hidden = true;
+        const notice = document.createElement('p');
+        notice.textContent = 'Microfone desligado. O transcritor local ainda não foi conectado. Este ensaio usa somente texto digitado, sem gravar ou enviar áudio. No futuro, o áudio será processado no servidor ATLAS autorizado; o uso de outro aparelho exigirá transmissão protegida até ele e uma nova autorização.';
+        const capture = document.createElement('button'); capture.disabled = true;
+        capture.textContent = 'Iniciar escuta — indisponível';
+        const acknowledgement = document.createElement('label');
+        const consent = document.createElement('input'); consent.type = 'checkbox';
+        acknowledgement.append(consent, document.createTextNode(' Entendi: testar texto não autoriza acesso ao microfone.'));
+        const label = document.createElement('label');
+        label.textContent = 'Frase de teste para este equipamento: ';
+        const input = document.createElement('input'); input.type = 'text'; input.maxLength = 300;
+        input.placeholder = 'Como está este equipamento?'; input.disabled = true; input.autocomplete = 'off';
+        label.appendChild(input);
+        const examples = document.createElement('p');
+        examples.textContent = 'Frases aceitas: “Como está este equipamento?”, “Quais são as evidências?”, “O que você pode fazer?” e “O que está autorizado a coletar?”.';
+        const review = document.createElement('button'); review.textContent = 'Revisar frase'; review.disabled = true;
+        const confirm = document.createElement('button'); confirm.textContent = 'Confirmar consulta'; confirm.disabled = true;
+        const cancel = document.createElement('button'); cancel.textContent = 'Cancelar e limpar';
+        const status = document.createElement('p'); status.setAttribute('role', 'status');
+        const draft = new VoiceDraft();
+        cancelVoiceDraft = () => {
+          draft.cancel(); input.value = ''; consent.checked = false;
+          input.disabled = true; review.disabled = true; confirm.disabled = true;
+          status.textContent = ''; voicePanel.hidden = true;
+          voiceButton.setAttribute('aria-expanded', 'false');
+        };
+        voiceButton.addEventListener('click', () => {
+          cancelVoiceDraft(); voicePanel.hidden = false;
+          voiceButton.setAttribute('aria-expanded', 'true'); consent.focus();
+        });
+        consent.addEventListener('change', () => {
+          draft.accept(consent.checked); input.value = ''; status.textContent = '';
+          input.disabled = !consent.checked; review.disabled = !consent.checked; confirm.disabled = true;
+        });
+        input.addEventListener('input', () => { draft.edit(input.value); confirm.disabled = true; status.textContent = ''; });
+        review.addEventListener('click', () => {
+          const intent = draft.review(); confirm.disabled = !intent;
+          status.textContent = intent ? `Confirmar a consulta “${input.value}” para ${asset.name}?` : 'Pergunta não reconhecida. Use uma das frases indicadas. Nenhuma consulta foi enviada.';
+        });
+        confirm.addEventListener('click', () => {
+          const intent = draft.confirm(); if (!intent) return;
+          cancelVoiceDraft(); voiceButton.focus(); ask(intent);
+        });
+        cancel.addEventListener('click', () => { cancelVoiceDraft(); voiceButton.focus(); });
+        voicePanel.append(notice, capture, acknowledgement, document.createElement('br'), label, examples, review, confirm, cancel, status);
+        assistant.append(voiceButton, voicePanel);
         assistant.appendChild(reply);
         details.appendChild(assistant);
       } catch (error) {
