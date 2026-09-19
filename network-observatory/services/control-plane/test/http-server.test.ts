@@ -1,3 +1,4 @@
+import { simulatedPolicy } from "../../../packages/contracts/src/index.ts";
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
@@ -59,13 +60,13 @@ async function withServer(
   const observationRepository = new InMemoryObservationRepository();
   const triageEngine = new PrinterTriageEngine(() => new Date("2026-09-16T12:00:00.000Z"));
   const controlPlane = new MinimalControlPlane(
-    [{ id: IDS.collector, tenantId: IDS.tenant, siteId: IDS.site, status: "ACTIVE" }],
+    [{ id: IDS.collector, tenantId: IDS.tenant, siteId: IDS.site, status: "ACTIVE", policy: simulatedPolicy(IDS.tenant, IDS.site, IDS.collector, IDS.asset) }],
     observationRepository,
     triageEngine,
     () => new Date("2026-09-16T12:00:00.000Z"),
   );
   const inventoryManager = new InventoryManager([
-    { id: IDS.collector, tenantId: IDS.tenant, siteId: IDS.site, status: "ACTIVE" },
+    { id: IDS.collector, tenantId: IDS.tenant, siteId: IDS.site, status: "ACTIVE", policy: simulatedPolicy(IDS.tenant, IDS.site, IDS.collector, IDS.asset) },
   ]);
   inventoryManager.registerTenant({
     id: IDS.tenant,
@@ -120,6 +121,7 @@ async function withServer(
     incidentRepository,
     collectorCredentials: [{ collectorId: IDS.collector, token: COLLECTOR_TOKEN }],
     operatorToken: OPERATOR_TOKEN,
+    operatorTenantIds: [IDS.tenant],
     dashboardHtml: "<!doctype html><title>ATLAS Dashboard Test</title>",
     inventoryManager,
     statusProjector,
@@ -232,6 +234,7 @@ test("runs Collector HTTP transport through the real local API", async () => {
         siteId: IDS.site,
         name: "Collector HTTP Test",
         authorizedAssetIds: [IDS.asset],
+      policy: simulatedPolicy(IDS.tenant, IDS.site, IDS.collector, IDS.asset),
       },
       new SimulatorProbe(),
       new InMemoryObservationOutbox(),
@@ -335,5 +338,69 @@ test("rejects unsupported content types and unknown routes", async () => {
 
     const missing = await fetch(`${baseUrl}/unknown`);
     assert.equal(missing.status, 404);
+  });
+});
+
+test("reader cannot select another tenant on any query route", async () => {
+  await withServer(async baseUrl => {
+    const otherTenant = "018f1d92-a0e1-7b22-8f13-f6783977f099";
+    for (const route of ["status", "incidents", "overview", "assets", "printers", "servers", "network", `assets/${IDS.asset}`]) {
+      const response = await fetch(`${baseUrl}/v1/tenants/${otherTenant}/${route}`, {
+        headers: { authorization: `Bearer ${OPERATOR_TOKEN}` },
+      });
+      assert.equal(response.status, 403, route);
+    }
+  });
+});
+
+test("reader cannot ingest; preview preserves observations and incidents", async () => {
+  await withServer(async baseUrl => {
+    const observations = batch(50);
+    const ingestUrl = `${baseUrl}/v1/collectors/${IDS.collector}/observations`;
+    const denied = await fetch(ingestUrl, {
+      method: "POST", headers: { authorization: `Bearer ${OPERATOR_TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({ observations }),
+    });
+    assert.equal(denied.status, 401);
+    const accepted = await fetch(ingestUrl, {
+      method: "POST", headers: { authorization: `Bearer ${COLLECTOR_TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({ observations }),
+    });
+    assert.equal(accepted.status, 200);
+    const headers = { authorization: `Bearer ${OPERATOR_TOKEN}` };
+    const query = `${baseUrl}/v1/tenants/${IDS.tenant}`;
+    const before = await (await fetch(`${query}/incidents`, { headers })).json();
+    for (let i = 0; i < 3; i++) {
+      const response = await fetch(`${query}/assets/${IDS.asset}`, { headers });
+      const body = await response.json();
+      assert.equal(response.status, 200);
+      assert.equal(body.contractVersion, "asset-preview/1.0");
+      assert.equal(body.source.acquisition, "UNVERIFIED");
+      assert.deepEqual(body.observations.map(item => item.id).sort(), observations.map(item => item.id).sort());
+    }
+    const after = await (await fetch(`${query}/incidents`, { headers })).json();
+    assert.deepEqual(after, before);
+    const missing = await fetch(`${query}/assets/018f1d92-a0e1-7b22-8f13-f6783977f099`, { headers });
+    assert.equal(missing.status, 404);
+  });
+});
+
+test("assistant authenticates and scopes requests and accepts only read intents", async () => {
+  await withServer(async baseUrl => {
+    const url = `${baseUrl}/v1/tenants/${IDS.tenant}/assets/${IDS.asset}/assistant`;
+    const headers = { authorization: `Bearer ${OPERATOR_TOKEN}` };
+    assert.equal((await fetch(url)).status, 401);
+    assert.equal((await fetch(url.replace(IDS.tenant, "018f1d92-a0e1-7b22-8f13-f6783977f099"), { headers })).status, 403);
+    assert.equal((await fetch(`${url}?question=restart`, { headers })).status, 400);
+    assert.equal((await fetch(url, { headers, method: "POST" })).status, 404);
+    const response = await fetch(url, { headers });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.provider, "DETERMINISTIC");
+    assert.equal(body.classification, "INDETERMINATE");
+    assert.equal(body.execution, "NONE");
+    assert.equal(body.assetId, IDS.asset);
+    const incidents = await (await fetch(`${baseUrl}/v1/tenants/${IDS.tenant}/incidents`, { headers })).json();
+    assert.deepEqual(incidents.incidents, []);
   });
 });

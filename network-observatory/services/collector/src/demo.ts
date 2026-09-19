@@ -1,3 +1,4 @@
+import { simulatedPolicy } from "../../../packages/contracts/src/index.ts";
 import type { Asset } from "../../../packages/contracts/src/index.ts";
 import { CollectorSimulator, InMemoryObservationOutbox, SimulatorProbe } from "./index.ts";
 
@@ -20,6 +21,7 @@ const collector = new CollectorSimulator(
     siteId,
     name: "Collector Matriz",
     authorizedAssetIds: [printer.id],
+      policy: simulatedPolicy(tenantId, siteId, "018f1d92-a0e1-7b22-8f13-f6783977f005", printer.id),
   },
   new SimulatorProbe(),
   new InMemoryObservationOutbox(),

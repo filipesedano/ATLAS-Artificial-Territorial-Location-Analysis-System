@@ -1,3 +1,4 @@
+import { assertObservationAllowed } from "../../../packages/contracts/src/index.ts";
 import {
   ContractViolation,
   assertObservation,
@@ -52,6 +53,14 @@ export class MinimalControlPlane {
         "COLLECTOR_NOT_AUTHORIZED",
         "Collector is unknown or suspended",
       );
+    }
+
+    // Preflight the entire batch before any repository write.
+    for (const item of observations) {
+      assertObservation(item);
+      assertTenantBoundary(collector.tenantId, item);
+      if (item.collectorId !== collector.id || item.siteId !== collector.siteId) throw new ContractViolation("COLLECTOR_SCOPE", "Observation outside collector scope");
+      assertObservationAllowed(collector.policy, item, this.clock());
     }
 
     let accepted = 0;
@@ -112,6 +121,20 @@ export class MinimalControlPlane {
       classification: assessment.classification,
     });
     return assessment;
+  }
+
+  collectionPolicySummary(tenantId: UUID, assetId: UUID) {
+    return [...this.collectors.values()]
+      .filter(item => item.tenantId === tenantId && item.policy?.targets.some(target => target.assetId === assetId))
+      .map(item => ({ collectorId: item.id, collectorState: item.status, policy: structuredClone(item.policy) }));
+  }
+
+  readObservations(tenantId: UUID, assetId: UUID): readonly Observation[] {
+    assertUuid(tenantId, "tenantId");
+    assertUuid(assetId, "assetId");
+    return this.repository.findByAsset(tenantId, assetId)
+      .slice().sort((a, b) => b.observedAt.localeCompare(a.observedAt))
+      .slice(0, 100).map(item => ({ ...item }));
   }
 
   auditRecords(): readonly AuditRecord[] {

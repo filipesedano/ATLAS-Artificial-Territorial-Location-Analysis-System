@@ -21,3 +21,8 @@ venv/
 coverage/
 dist/
 build/
+
+# Collector queue and local authorizations.
+services/collector/data/
+collection-policy.local.json
+*.atlas.lock

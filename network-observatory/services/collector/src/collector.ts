@@ -1,3 +1,4 @@
+import { assertCollectionAllowed, assertObservationAllowed } from "../../../packages/contracts/src/index.ts";
 import { randomUUID } from "node:crypto";
 import { isIP } from "node:net";
 
@@ -22,6 +23,7 @@ import type {
 } from "./types.ts";
 
 export class CollectorSimulator {
+  private readonly lastCollection = new Map<string, number>();
   private readonly identity: CollectorIdentity;
   private readonly probe: Probe;
   private readonly outbox: ObservationOutbox;
@@ -51,7 +53,11 @@ export class CollectorSimulator {
   collect(target: MonitoredPrinter): CollectionResult {
     this.assertAuthorizedTarget(target);
 
-    const observedAt = this.clock().toISOString();
+    const now = this.clock();
+    assertCollectionAllowed(this.identity.policy, { tenantId: this.identity.tenantId, siteId: this.identity.siteId, collectorId: this.identity.id, assetId: target.asset.id }, now, undefined, target.ipAddress);
+    const last = this.lastCollection.get(target.asset.id);
+    if (last !== undefined && now.getTime() - last < this.identity.policy!.minIntervalMs) throw new ContractViolation("COLLECTION_INTERVAL", "Collection interval has not elapsed");
+    const observedAt = now.toISOString();
     const runId = `${this.identity.id}:${target.asset.id}:${observedAt}`;
     const observations = this.probe.inspect(target).map((reading, index): Observation => {
       const observation: Observation = {
@@ -69,10 +75,12 @@ export class CollectorSimulator {
         idempotencyKey: `${runId}:${index}:${reading.kind}`,
       };
       assertObservation(observation);
+      assertObservationAllowed(this.identity.policy, observation, now);
       return observation;
     });
 
     this.outbox.enqueue(observations);
+    this.lastCollection.set(target.asset.id, now.getTime());
     return { runId, observations, queued: this.outbox.pending().length };
   }
 
@@ -80,6 +88,7 @@ export class CollectorSimulator {
     const batch = this.outbox.pending();
     if (batch.length === 0) return { attempted: 0, acknowledged: 0, remaining: 0 };
 
+    for (const item of batch) assertObservationAllowed(this.identity.policy, item, this.clock());
     const acknowledgedKeys = await transport.send(batch);
     const attemptedKeys = new Set(batch.map((item) => item.idempotencyKey));
     const safeAcknowledgements = [...new Set(acknowledgedKeys)].filter((key) =>

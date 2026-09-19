@@ -1,3 +1,7 @@
+import { readFileSync, mkdirSync } from "node:fs";
+import { resolve } from "node:path";
+import { BoundedObservationOutbox, JsonFileObservationOutbox } from "./outbox.ts";
+import { simulatedPolicy, type CollectionPolicy } from "../../../packages/contracts/src/index.ts";
 import type { Asset } from "../../../packages/contracts/src/index.ts";
 import {
   CollectorSimulator,
@@ -24,8 +28,15 @@ const printer: Asset = {
   createdAt: "2026-09-16T12:00:00.000Z",
 };
 
+const collectionPolicy: CollectionPolicy = process.env.ATLAS_COLLECTION_POLICY_FILE
+  ? JSON.parse(readFileSync(process.env.ATLAS_COLLECTION_POLICY_FILE, "utf8"))
+  : simulatedPolicy(tenantId, siteId, collectorId, assetId);
+
 let round = 0;
 const demoStartedAt = Date.now();
+const outboxDirectory = resolve(process.cwd(), "data");
+mkdirSync(outboxDirectory, { recursive: true });
+const outbox = new BoundedObservationOutbox(new JsonFileObservationOutbox(resolve(outboxDirectory, "collector-outbox.json")));
 const collector = new CollectorSimulator(
   {
     id: collectorId,
@@ -33,9 +44,10 @@ const collector = new CollectorSimulator(
     siteId,
     name: "Collector Local Simulado",
     authorizedAssetIds: [assetId],
+      policy: collectionPolicy,
   },
   new SimulatorProbe(),
-  new InMemoryObservationOutbox(),
+  outbox,
   () => new Date(demoStartedAt + ++round * 1_000),
 );
 const transport = new HttpObservationTransport({
@@ -62,3 +74,5 @@ for (let index = 1; index <= 3; index += 1) {
 
 console.log("Incidente interno esperado após a terceira rodada.");
 console.log(`Abra ${baseUrl} e selecione API LOCAL para visualizar.`);
+
+console.log("Fila local:", outbox.status());

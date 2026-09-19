@@ -1,0 +1,10 @@
+import { readdirSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+const root=fileURLToPath(new URL('../',import.meta.url));
+const directories=['packages/contracts/test','services/collector/test','services/control-plane/test'];
+const files=directories.flatMap(dir=>readdirSync(resolve(root,dir)).filter(name=>name.endsWith('.test.ts')).sort().map(name=>resolve(root,dir,name)));
+const result=spawnSync(process.execPath,['--test',...files],{cwd:root,stdio:'inherit',shell:false});
+if(result.error)console.error('Não foi possível executar os testes.');
+process.exitCode=result.status??1;
