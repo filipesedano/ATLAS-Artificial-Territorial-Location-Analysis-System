@@ -250,7 +250,7 @@
         </div>
         <div class="evidence"><span class="kind">MEDIDO</span><br><span id="evidenceText">Roteador sem resposta após três verificações. Duas impressoras perderam comunicação 12 segundos depois.</span></div>
         <div class="ai"><span class="kind" id="analysisKind">ANÁLISE ATLAS • LLM SIMULADO</span><br><span id="analysisText">Existe uma provável causa comum. Recomenda-se verificar primeiro o roteador. Esta conclusão é uma recomendação, não um diagnóstico confirmado.</span></div>
-        <div class="actions"><button class="action primary">ASSUMIR CHAMADO</button><button class="action" id="analyze">ANALISAR</button><button class="action">VER EVIDÊNCIAS</button><button class="action">HISTÓRICO</button></div>
+        <div class="actions"><button class="action primary" data-incident-action="assume">ASSUMIR CHAMADO</button><button class="action" id="analyze" data-incident-action="analysis">ANALISAR</button><button class="action" data-incident-action="evidence">VER EVIDÊNCIAS</button><button class="action" data-incident-action="history">HISTÓRICO</button></div>
       </aside>
     </main>
 
@@ -262,6 +262,11 @@
     </footer>
   </div>
 
+  <dialog id="incidentActionDialog" aria-labelledby="incidentActionTitle" style="max-width: min(760px,90vw);max-height:80vh;overflow:auto">
+    <h2 id="incidentActionTitle"></h2><pre id="incidentActionContent" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>
+    <button id="confirmAssume" hidden>Confirmar: assumir como admin</button>
+    <button id="closeIncidentAction">Fechar</button>
+  </dialog>
   <dialog id="loginDialog" class="login-dialog" aria-labelledby="loginTitle">
     <h2 id="loginTitle">Entrar no ATLAS</h2>
     <p id="loginDescription">Administrador local • acesso ao cliente configurado</p>
@@ -729,7 +734,7 @@
       ui.factAffected.textContent = incident.assetId ? '1' : '—';
       ui.factClassification.textContent = incident.classification;
       ui.factState.textContent = incident.status;
-      ui.factTechnician.textContent = 'Aguardando';
+      ui.factTechnician.textContent = incident.assignment?.actor || 'Aguardando';
       ui.evidenceText.textContent = `${incident.observationIds.length} observação(ões) vinculada(s) ao incidente.`;
       ui.analysisKind.textContent = 'ATLAS • REGRA DETERMINÍSTICA';
       ui.analysisText.textContent = 'O incidente foi criado pelo mecanismo de persistência. A causa física continua dependendo de confirmação humana.';
@@ -760,10 +765,51 @@
 
     document.querySelector('#closeDrawer').addEventListener('click', () => closePreview());
     window.addEventListener('keydown', event => { if (event.key === 'Escape') closePreview(); });
-    document.querySelectorAll('.actions button').forEach(button => {
-      button.disabled = true;
-      button.title = 'Ação não implementada nesta prévia somente leitura';
+    const actionDialog = document.querySelector('#incidentActionDialog');
+    const actionContent = document.querySelector('#incidentActionContent');
+    const confirmAssume = document.querySelector('#confirmAssume');
+    let selectedIncidentAction = null;
+    document.querySelector('#closeIncidentAction').onclick = () => actionDialog.close();
+    document.querySelectorAll('[data-incident-action]').forEach(button => {
+      button.addEventListener('click', async () => {
+        const incident = currentMode === 'API_LOCAL' && apiCache?.incidents.find(item => ['OPEN','ACKNOWLEDGED'].includes(item.status));
+        selectedIncidentAction = incident?.id ?? null;
+        confirmAssume.hidden = true;
+        document.querySelector('#incidentActionTitle').textContent = button.textContent;
+        actionDialog.showModal();
+        if (!incident) {actionContent.textContent = 'Nenhum incidente ativo da API selecionado. No modo simulado estes botões não alteram dados.';return;}
+        const action = button.dataset.incidentAction;
+        if (action === 'assume') {
+          actionContent.textContent = `Assumir “${incident.title}” como admin? Isso registra responsabilidade pelo incidente interno. Não executa comandos nem abre chamado externo.`;
+          confirmAssume.hidden = false;return;
+        }
+        actionContent.textContent = 'Consultando registros…';
+        try {
+          const result = await apiRequest(`/v1/tenants/${tenantId}/incidents/${incident.id}/${action}`);
+          actionContent.textContent = action === 'analysis'
+            ? `${result.classification} • ANÁLISE DETERMINÍSTICA\n${result.answer}\nObservações: ${result.observationIds.join(', ') || 'nenhuma'}\nOrigem: ${result.acquisition}`
+            : JSON.stringify(result,null,2);
+          if (result.assignment) ui.factTechnician.textContent = result.assignment.actor;
+        } catch(error) {actionContent.textContent = `Consulta não concluída: ${error.message}`;}
+      });
     });
+    confirmAssume.onclick = async () => {
+      const id = selectedIncidentAction;
+      if (!id || currentMode !== 'API_LOCAL') return;
+      confirmAssume.disabled = true;
+      try {
+        const response = await fetch(`${apiBase}/v1/tenants/${tenantId}/incidents/${id}/assume`,{
+          method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({confirm:true})
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error?.message || `HTTP ${response.status}`);
+        actionContent.textContent = `Responsabilidade registrada para ${result.assignment.actor} em ${result.assignment.occurredAt}.`;
+        confirmAssume.hidden = true;
+        await renderApiLocal();
+        ui.factTechnician.textContent = result.assignment.actor;
+      } catch(error) {actionContent.textContent = `Atribuição não confirmada: ${error.message}. Consulte o histórico antes de repetir.`;}
+      finally {confirmAssume.disabled = false;}
+    };
     globe.addEventListener('pointerdown', event => {
       if (event.target.closest('button')) return;
       dragging = true; startX = event.clientX; startY = event.clientY; globe.setPointerCapture(event.pointerId);
@@ -792,7 +838,7 @@
       for (const id of ['bootstrapInput','recoveryInput','loginPassword','repeatPassword']) document.querySelector(`#${id}`).value = '';
     }
     function showLogin(mode) {
-      loginMode = mode; clearLoginSecrets(); closePreview(false); apiCache = null;
+      actionDialog.close(); loginMode = mode; clearLoginSecrets(); closePreview(false); apiCache = null;
       renderSimulated(); ui.shell.inert = true;
       document.querySelector('#bootstrapLabel').hidden = mode !== 'setup';
       document.querySelector('#recoveryLabel').hidden = mode !== 'recover';

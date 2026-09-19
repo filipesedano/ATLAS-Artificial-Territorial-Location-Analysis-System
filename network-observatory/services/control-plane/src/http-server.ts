@@ -18,6 +18,7 @@ export interface CollectorCredential {
 
 export interface AtlasHttpServerOptions {
   auth?: LocalAuth;
+  database?: import("node:sqlite").DatabaseSync;
   controlPlane: MinimalControlPlane;
   incidentManager: IncidentManager;
   incidentRepository: IncidentRepository;
@@ -282,6 +283,46 @@ export function createAtlasHttpServer(options: AtlasHttpServerOptions): Server {
         return;
       }
 
+      const incidentAction = url.pathname.match(/^\/v1\/tenants\/([0-9a-f-]+)\/incidents\/([0-9a-f-]+)\/(assume|history|evidence|analysis)$/i);
+      if (incidentAction) {
+        requireOperator(request, options);
+        const [, tenantId, incidentId, action] = incidentAction;
+        if (!options.operatorTenantIds.includes(tenantId)) throw new HttpError(403,"TENANT_FORBIDDEN","Cliente não autorizado.");
+        let incident = options.incidentRepository.listByTenant(tenantId).find(item=>item.id===incidentId);
+        if (!incident) throw new HttpError(404,"INCIDENT_NOT_FOUND","Incidente não encontrado.");
+        const assignment = () => options.database?.prepare('SELECT actor, occurred_at AS occurredAt, policy_version AS policyVersion FROM incident_assignment WHERE tenant_id=? AND incident_id=?').get(tenantId,incidentId) ?? null;
+        if (action === 'assume' && method === 'POST') {
+          if (!options.auth || !options.database) throw new HttpError(403,"HUMAN_SESSION_REQUIRED","Atribuição exige sessão do administrador local.");
+          requireLocalOrigin(request);
+          const body = await readJsonBody(request,4096) as Record<string,unknown>;
+          if (!body || body.confirm !== true || Object.keys(body).some(key=>key!=='confirm')) throw new HttpError(400,"CONFIRMATION_REQUIRED","Confirme explicitamente a atribuição ao administrador autenticado.");
+          incident = options.incidentRepository.listByTenant(tenantId).find(item=>item.id===incidentId);
+          if (!incident) throw new HttpError(404,'INCIDENT_NOT_FOUND','Incidente não encontrado.');
+          if (!['OPEN','ACKNOWLEDGED'].includes(incident.status)) throw new HttpError(409,"INCIDENT_NOT_ACTIVE","O incidente já está encerrado.");
+          const db=options.database;
+          db.exec('BEGIN IMMEDIATE');
+          try {
+            if (!assignment()) {
+              const occurredAt=new Date().toISOString();
+              db.prepare('INSERT INTO incident_assignment VALUES(?,?,?,?,?)').run(tenantId,incidentId,'admin',occurredAt,'human-assignment/1.0');
+              options.incidentRepository.save({...incident,status:'ACKNOWLEDGED',updatedAt:occurredAt});
+            }
+            db.exec('COMMIT');
+          } catch(error) {db.exec('ROLLBACK');throw error;}
+          sendJson(response,200,{contractVersion:'incident-actions/1.0',assignment:assignment(),status:'ACKNOWLEDGED'});return;
+        }
+        if (method !== 'GET' || action === 'assume') throw new HttpError(405,"METHOD_NOT_ALLOWED","Método não permitido.");
+        const observations = options.controlPlane.readObservations(tenantId,incident.assetId).filter(item=>incident.observationIds.includes(item.id));
+        const shared={contractVersion:'incident-actions/1.0',tenantId,incidentId,assignment:assignment(),acquisition:'UNVERIFIED'};
+        if (action === 'history') {
+          sendJson(response,200,{...shared,events:options.incidentManager.auditRecords().filter(item=>item.tenantId===tenantId && item.incidentId===incidentId),note:'Histórico registrado deste incidente; não inclui triagens anteriores sem vínculo. A atribuição humana é um registro separado.'});return;
+        }
+        if (action === 'evidence') {
+          sendJson(response,200,{...shared,observations,missingObservationIds:incident.observationIds.filter(id=>!observations.some(item=>item.id===id)),unavailableEvidenceIds:incident.evidenceIds,note:'Consulta limitada às 100 observações mais recentes do ativo. Referências ausentes não foram recuperadas; API local não comprova aquisição real.'});return;
+        }
+        sendJson(response,200,{...shared,...answerAssetQuestion('status',observations),incidentClassification:incident.classification});return;
+      }
+
       const tenantIncidentsMatch = url.pathname.match(
         /^\/v1\/tenants\/([0-9a-f-]+)\/incidents$/i,
       );
@@ -292,7 +333,9 @@ export function createAtlasHttpServer(options: AtlasHttpServerOptions): Server {
         }
         const tenantId = tenantIncidentsMatch[1];
         const incidents = options.incidentRepository.listByTenant(tenantId);
-        sendJson(response, 200, { tenantId, incidents });
+        sendJson(response, 200, { tenantId, incidents: incidents.map(item=>({...item,
+          assignment: options.database?.prepare('SELECT actor, occurred_at AS occurredAt FROM incident_assignment WHERE tenant_id=? AND incident_id=?').get(tenantId,item.id) ?? null
+        })) });
         return;
       }
 

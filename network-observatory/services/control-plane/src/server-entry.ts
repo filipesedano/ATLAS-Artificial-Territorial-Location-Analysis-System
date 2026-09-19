@@ -123,6 +123,7 @@ const statusProjector = new StatusProjector(
   triageEngine,
 );
 const server = createAtlasHttpServer({
+  database: localDatabase.connection,
   auth: new LocalAuth(localDatabase.connection),
   controlPlane,
   incidentManager,

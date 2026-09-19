@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const LOCAL_SCHEMA_VERSION = 2;
+export const LOCAL_SCHEMA_VERSION = 3;
 
 interface Migration {
   version: number;
@@ -78,6 +78,11 @@ const MIGRATIONS: readonly Migration[] = [
     `,
   },
   { version: 2, statements: AUTH_SCHEMA_SQL },
+  { version: 3, statements: `CREATE TABLE incident_assignment (
+    tenant_id TEXT NOT NULL, incident_id TEXT NOT NULL, actor TEXT NOT NULL,
+    occurred_at TEXT NOT NULL, policy_version TEXT NOT NULL,
+    PRIMARY KEY(tenant_id, incident_id)
+  ) STRICT;` },
 ];
 
 export class LocalDatabase {
