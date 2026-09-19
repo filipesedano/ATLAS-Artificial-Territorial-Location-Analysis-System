@@ -64,3 +64,7 @@ Registrar resultado de cada camada: data, commit, SO, Node, PASSOU/FALHOU/PENDEN
 ## Evidência desta entrega
 
 82 testes passaram localmente em Linux/Node 24.19.0, incluindo startup HTTP com SQLite temporário, segundo processo bloqueado e reinício após encerramento. Workflow configurado com permissões contents:read, ações fixadas por SHA, sem instalação de dependências externas do projeto e sem exportar bancos/segredos como artefatos. Consultar o resultado efetivo no PR: arquivo de workflow publicado não significa execução aprovada.
+
+## Atualização — login local
+
+A prévia agora utiliza login admin em vez de colar o token leitor no modo API LOCAL. Na primeira abertura, usar ATLAS_OPERATOR_TOKEN apenas como token de bootstrap para definir sua senha e guardar o código de recuperação. Depois, entrar com admin e a senha. Ler LOCAL-LOGIN-v0.1.md antes do teste: schema 2 é incompatível com o binário antigo da v0.1.1; usar banco de laboratório separado e preservar backup anterior. Não há recuperação por e-mail/SMS nem instalação de usuário no Windows.

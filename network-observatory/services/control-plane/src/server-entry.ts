@@ -1,3 +1,4 @@
+import { LocalAuth } from "./local-auth.ts";
 import { loadConfig } from '../../../tools/runtime-config.mjs';
 import { acquireInstanceLock } from '../../../tools/instance-lock.mjs';
 import { randomUUID } from "node:crypto";
@@ -122,6 +123,7 @@ const statusProjector = new StatusProjector(
   triageEngine,
 );
 const server = createAtlasHttpServer({
+  auth: new LocalAuth(localDatabase.connection),
   controlPlane,
   incidentManager,
   incidentRepository,

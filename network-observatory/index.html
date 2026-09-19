@@ -166,6 +166,12 @@
   .drawer { max-height: 85%; overflow: auto; }
     [hidden] { display: none !important; }
     .node:focus-visible { outline: 3px solid #111; outline-offset: 5px; }
+    .login-dialog { width:min(440px,90vw); border:1px solid #c7d5d0; border-radius:18px; padding:28px; background:#f8fbf9; color:#172b26; }
+    .login-dialog::backdrop { background:rgba(12,28,23,.85); }
+    .login-dialog label { display:block; margin:14px 0; }
+    .login-dialog input { display:block; width:100%; box-sizing:border-box; padding:10px; margin-top:5px; }
+    .login-dialog button { margin:6px 4px 6px 0; padding:10px; cursor:pointer; }
+    .login-dialog pre { white-space:pre-wrap; overflow-wrap:anywhere; background:#e6eee9; padding:12px; }
   </style>
 </head>
 <body>
@@ -256,6 +262,23 @@
     </footer>
   </div>
 
+  <dialog id="loginDialog" class="login-dialog" aria-labelledby="loginTitle">
+    <h2 id="loginTitle">Entrar no ATLAS</h2>
+    <p id="loginDescription">Administrador local • acesso ao cliente configurado</p>
+    <form id="loginForm">
+      <label>Usuário<input value="admin" readonly autocomplete="username"></label>
+      <label id="bootstrapLabel" hidden>Token de configuração inicial<input id="bootstrapInput" type="password" autocomplete="off"></label>
+      <label id="recoveryLabel" hidden>Código de recuperação<input id="recoveryInput" type="password" autocomplete="off" maxlength="64"></label>
+      <label>Senha <span id="passwordHint"></span><input id="loginPassword" type="password" required maxlength="128" autocomplete="current-password"></label>
+      <label id="repeatLabel" hidden>Confirmar nova senha<input id="repeatPassword" type="password" maxlength="128" autocomplete="new-password"></label>
+      <button id="loginSubmit" type="submit">Entrar</button>
+      <button id="recoveryButton" type="button">Esqueci minha senha</button>
+      <button id="backLogin" type="button" hidden>Voltar ao login</button>
+    </form>
+    <div id="recoverySaved" hidden><p>Guarde este código em seu gerenciador de senhas. Ele será exibido uma vez, vale por um ano e será substituído quando usado.</p><pre id="recoveryCode"></pre><button id="savedCode" type="button">Guardei o código — ir para login</button></div>
+    <p id="loginMessage" role="status"></p>
+    <p>E-mail e SMS de recuperação ainda não estão disponíveis. Não há envio de mensagens nesta versão.</p>
+  </dialog>
   <script>
     // VOICE_DRAFT_START: deterministic rehearsal; no audio capture or transcription.
     class VoiceDraft {
@@ -296,7 +319,6 @@
     const llmProvider = new SimulatedLLMProvider();
     const tenantId = '018f1d92-a0e1-7b22-8f13-f6783977f001';
     const apiBase = location.protocol === 'file:' ? 'http://127.0.0.1:8080' : '';
-    let operatorToken = '';
     let currentMode = 'SIMULATED';
     let currentView = 'overview';
     let apiCache = null;
@@ -633,9 +655,10 @@
 
     async function apiRequest(path) {
       const response = await fetch(`${apiBase}${path}`, {
-        headers: { authorization: `Bearer ${operatorToken}` },
+        credentials: 'same-origin',
         cache: 'no-store'
       });
+      if (response.status === 401) showLogin('login');
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
         throw new Error(body.error?.message || `API respondeu ${response.status}`);
@@ -647,11 +670,6 @@
       if (location.protocol === 'file:') {
         throw new Error('Para usar a API local, abra o painel pelo endereço http://127.0.0.1:8080. O arquivo direto permanece no modo simulado.');
       }
-      if (!operatorToken) {
-        operatorToken = prompt('Informe o token local do operador. Ele será mantido somente na memória desta página:') || '';
-      }
-      if (!operatorToken) throw new Error('Token do operador não informado.');
-
       const [status, incidentData, overview, assetsData, printersData, serversData, networkData] = await Promise.all([
         apiRequest(`/v1/tenants/${tenantId}/status`),
         apiRequest(`/v1/tenants/${tenantId}/incidents`),
@@ -725,7 +743,6 @@
       try {
         await renderApiLocal();
       } catch (error) {
-        operatorToken = '';
         renderSimulated();
         ui.coreStatus.textContent = 'API LOCAL INDISPONÍVEL';
         ui.monitorStatus.textContent = error.message;
@@ -766,6 +783,70 @@
     globe.addEventListener('pointercancel', () => dragging = false);
     renderSimulated();
     navigate(routeFromHash());
+    const loginDialog = document.querySelector('#loginDialog');
+    const loginForm = document.querySelector('#loginForm');
+    const loginMessage = document.querySelector('#loginMessage');
+    let loginMode = 'login';
+    let authBusy = false;
+    function clearLoginSecrets() {
+      for (const id of ['bootstrapInput','recoveryInput','loginPassword','repeatPassword']) document.querySelector(`#${id}`).value = '';
+    }
+    function showLogin(mode) {
+      loginMode = mode; clearLoginSecrets(); closePreview(false); apiCache = null;
+      renderSimulated(); ui.shell.inert = true;
+      document.querySelector('#bootstrapLabel').hidden = mode !== 'setup';
+      document.querySelector('#recoveryLabel').hidden = mode !== 'recover';
+      document.querySelector('#repeatLabel').hidden = mode === 'login';
+      document.querySelector('#backLogin').hidden = mode !== 'recover';
+      document.querySelector('#recoveryButton').hidden = mode !== 'login';
+      document.querySelector('#loginPassword').autocomplete = mode === 'login' ? 'current-password' : 'new-password';
+      document.querySelector('#passwordHint').textContent = mode === 'login' ? '' : '(15 a 128 caracteres)';
+      document.querySelector('#loginTitle').textContent = mode === 'setup' ? 'Criar administrador local' : mode === 'recover' ? 'Recuperar acesso' : 'Entrar no ATLAS';
+      document.querySelector('#loginSubmit').textContent = mode === 'login' ? 'Entrar' : 'Salvar nova senha';
+      document.querySelector('#recoverySaved').hidden = true; document.querySelector('#recoveryCode').textContent = '';
+      loginForm.hidden = false; loginMessage.textContent = '';
+      if (!loginDialog.open) loginDialog.showModal();
+    }
+    loginDialog.addEventListener('cancel', event => event.preventDefault());
+    document.querySelector('#recoveryButton').addEventListener('click', () => { if (!authBusy) showLogin('recover'); });
+    document.querySelector('#backLogin').addEventListener('click', () => { if (!authBusy) showLogin('login'); });
+    document.querySelector('#savedCode').addEventListener('click', () => showLogin('login'));
+    loginForm.addEventListener('submit', async event => {
+      event.preventDefault(); if (authBusy) return;
+      const password = document.querySelector('#loginPassword').value;
+      if (loginMode !== 'login' && (password.length < 15 || password !== document.querySelector('#repeatPassword').value)) {
+        loginMessage.textContent = 'Use pelo menos 15 caracteres e confirme a mesma senha.'; return;
+      }
+      authBusy = true; document.querySelector('#loginSubmit').disabled = true;
+      try {
+        const body = { username: 'admin', password, bootstrapToken: document.querySelector('#bootstrapInput').value, code: document.querySelector('#recoveryInput').value };
+        const response = await fetch(`/auth/${loginMode}`, {method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+        const result = await response.json(); clearLoginSecrets();
+        if (!response.ok) throw new Error(result.error?.message || 'Acesso não autorizado.');
+        if (loginMode === 'login') {
+          loginDialog.close(); ui.shell.inert = false; await renderApiLocal();
+        } else {
+          loginForm.hidden = true; document.querySelector('#recoverySaved').hidden = false;
+          document.querySelector('#recoveryCode').textContent = result.recoveryCode;
+          loginMessage.textContent = 'Senha salva. Guarde o novo código antes de continuar.';
+        }
+      } catch(error) { loginMessage.textContent = error.message; }
+      finally { authBusy = false; document.querySelector('#loginSubmit').disabled = false; }
+    });
+    const logoutButton = document.createElement('button'); logoutButton.className = 'action'; logoutButton.textContent = 'Sair';
+    logoutButton.addEventListener('click', async () => {
+      try { const response = await fetch('/auth/logout',{method:'POST',credentials:'same-origin'}); if(!response.ok) throw new Error(); showLogin('login'); }
+      catch { showLogin('login'); loginMessage.textContent = 'Não foi possível confirmar o encerramento da sessão no servidor. Tente novamente ao reconectar.'; }
+    });
+    document.querySelector('.nav').appendChild(logoutButton);
+    if (location.protocol !== 'file:') {
+      ui.shell.inert = true;
+      fetch('/auth/status',{credentials:'same-origin',cache:'no-store'}).then(async response=> {
+        if(!response.ok) throw new Error(); const state = await response.json();
+        if(state.authenticated){ui.shell.inert=false;await renderApiLocal();}else showLogin(state.configured?'login':'setup');
+      }).catch(()=>{showLogin('login');loginMessage.textContent='Servidor de autenticação indisponível. Nenhuma credencial foi enviada.';});
+    }
+
   </script>
 </body>
 </html>

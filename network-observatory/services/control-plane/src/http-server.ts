@@ -1,3 +1,4 @@
+import { LocalAuth, AuthError } from "./local-auth.ts";
 import { answerAssetQuestion, type AgentQuestion } from "./readonly-agent.ts";
 import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -16,6 +17,7 @@ export interface CollectorCredential {
 }
 
 export interface AtlasHttpServerOptions {
+  auth?: LocalAuth;
   controlPlane: MinimalControlPlane;
   incidentManager: IncidentManager;
   incidentRepository: IncidentRepository;
@@ -60,8 +62,10 @@ function sendHtml(response: ServerResponse, html: string): void {
     "content-length": Buffer.byteLength(html),
     "cache-control": "no-store",
     "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY",
+    "referrer-policy": "no-referrer",
     "content-security-policy":
-      "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:* http://localhost:*",
+      "frame-ancestors 'none'; default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:* http://localhost:*",
   });
   response.end(html);
 }
@@ -82,7 +86,7 @@ function tokenMatches(received: string | undefined, expected: string): boolean {
   );
 }
 
-async function readJsonBody(request: IncomingMessage): Promise<unknown> {
+async function readJsonBody(request: IncomingMessage, limit = MAX_REQUEST_BYTES): Promise<unknown> {
   const contentType = request.headers["content-type"] ?? "";
   if (!contentType.toLowerCase().startsWith("application/json")) {
     throw new HttpError(415, "CONTENT_TYPE_REQUIRED", "Content-Type must be application/json");
@@ -93,7 +97,7 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     received += buffer.length;
-    if (received > MAX_REQUEST_BYTES) {
+    if (received > limit) {
       throw new HttpError(413, "REQUEST_TOO_LARGE", "Request body exceeds 1 MiB");
     }
     chunks.push(buffer);
@@ -105,9 +109,20 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   }
 }
 
-function requireOperator(request: IncomingMessage, expectedToken: string): void {
-  if (!tokenMatches(bearerToken(request), expectedToken)) {
-    throw new HttpError(401, "UNAUTHORIZED", "Valid operator authentication is required");
+function sessionToken(request: IncomingMessage): string | undefined {
+  return request.headers.cookie?.split(';').map(value=>value.trim()).find(value=>value.startsWith('atlas_session='))?.slice('atlas_session='.length);
+}
+function requireOperator(request: IncomingMessage, options: AtlasHttpServerOptions): void {
+  if(options.auth) {
+    if(!options.auth.authorized(sessionToken(request))) throw new HttpError(401,"UNAUTHORIZED","Entre com o administrador local.");
+    return;
+  }
+  if (!tokenMatches(bearerToken(request), options.operatorToken)) throw new HttpError(401, "UNAUTHORIZED", "Valid operator authentication is required");
+}
+function requireLocalOrigin(request: IncomingMessage): void {
+  const port=request.socket.localPort;
+  if (![ `http://127.0.0.1:${port}`, `http://localhost:${port}` ].includes(request.headers.origin ?? '')) {
+    throw new HttpError(403,"ORIGIN_DENIED","Origem não autorizada.");
   }
 }
 
@@ -123,6 +138,7 @@ function requireCollector(
 }
 
 function mapError(error: unknown): HttpError {
+  if (error instanceof AuthError) return new HttpError(error.status,"AUTH_ERROR",error.message);
   if (error instanceof HttpError) return error;
   if (error instanceof ContractViolation) {
     return new HttpError(422, error.invariant, error.message);
@@ -138,6 +154,36 @@ export function createAtlasHttpServer(options: AtlasHttpServerOptions): Server {
     try {
       const method = request.method ?? "GET";
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
+
+      if (options.auth) {
+        const port=request.socket.localPort;
+        if (![ `127.0.0.1:${port}`, `localhost:${port}` ].includes(request.headers.host ?? '')) throw new HttpError(403,"HOST_DENIED","Host local obrigatório.");
+        if(method === 'GET' && url.pathname === '/auth/status') {
+          sendJson(response,200,{configured:options.auth.configured(),authenticated:options.auth.authorized(sessionToken(request)),username:'admin',recovery:'OFFLINE_CODE',emailRecovery:false,smsRecovery:false});return;
+        }
+        if(method === 'POST' && ['/auth/setup','/auth/login','/auth/recover','/auth/logout'].includes(url.pathname)) {
+          requireLocalOrigin(request);
+          if(url.pathname === '/auth/logout') {
+            options.auth.logout(sessionToken(request));
+            response.setHeader('set-cookie','atlas_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
+            sendJson(response,200,{ok:true});return;
+          }
+          const body=await readJsonBody(request,4096) as Record<string,unknown>;
+          if(!body || typeof body!=='object' || Array.isArray(body))throw new HttpError(400,'INVALID_REQUEST','Solicitação inválida.');
+          const result=await options.auth.attempt(async()=>{
+            if(url.pathname === '/auth/setup') {
+              if(typeof body.bootstrapToken!=='string'||!tokenMatches(body.bootstrapToken,options.operatorToken)) throw new AuthError(401,'Credenciais inválidas.');
+              return {recoveryCode:await options.auth!.setup(body.password)};
+            }
+            if(url.pathname === '/auth/recover')return {recoveryCode:await options.auth!.recover(body.code,body.password)};
+            const session=await options.auth!.login(body.username,body.password);
+            // HTTP loopback only. HTTPS and Secure cookies are required before remote deployment.
+            response.setHeader('set-cookie',`atlas_session=${session}; HttpOnly; SameSite=Strict; Path=/; Max-Age=1800`);
+            return {ok:true};
+          });
+          sendJson(response,200,result);return;
+        }
+      }
 
       if (method === "GET" && url.pathname === "/health") {
         sendJson(response, 200, {
@@ -208,7 +254,7 @@ export function createAtlasHttpServer(options: AtlasHttpServerOptions): Server {
         /^\/v1\/tenants\/([0-9a-f-]+)\/assets\/([0-9a-f-]+)\/assistant$/i,
       );
       if (method === "GET" && assistantMatch) {
-        requireOperator(request, options.operatorToken);
+        requireOperator(request, options);
         const [, tenantId, assetId] = assistantMatch;
         if (!options.operatorTenantIds?.includes(tenantId)) {
           throw new HttpError(403, "TENANT_FORBIDDEN", "Reader is not authorized for this tenant");
@@ -240,7 +286,7 @@ export function createAtlasHttpServer(options: AtlasHttpServerOptions): Server {
         /^\/v1\/tenants\/([0-9a-f-]+)\/incidents$/i,
       );
       if (method === "GET" && tenantIncidentsMatch) {
-        requireOperator(request, options.operatorToken);
+        requireOperator(request, options);
         if (!options.operatorTenantIds?.includes(url.pathname.split("/")[3])) {
           throw new HttpError(403, "TENANT_FORBIDDEN", "Reader is not authorized for this tenant");
         }
@@ -254,7 +300,7 @@ export function createAtlasHttpServer(options: AtlasHttpServerOptions): Server {
         /^\/v1\/tenants\/([0-9a-f-]+)\/overview$/i,
       );
       if (method === "GET" && tenantOverviewMatch) {
-        requireOperator(request, options.operatorToken);
+        requireOperator(request, options);
         if (!options.operatorTenantIds?.includes(url.pathname.split("/")[3])) {
           throw new HttpError(403, "TENANT_FORBIDDEN", "Reader is not authorized for this tenant");
         }
@@ -270,7 +316,7 @@ export function createAtlasHttpServer(options: AtlasHttpServerOptions): Server {
         /^\/v1\/tenants\/([0-9a-f-]+)\/assets\/([0-9a-f-]+)$/i,
       );
       if (method === "GET" && assetDetailMatch) {
-        requireOperator(request, options.operatorToken);
+        requireOperator(request, options);
         if (!options.operatorTenantIds?.includes(url.pathname.split("/")[3])) {
           throw new HttpError(403, "TENANT_FORBIDDEN", "Reader is not authorized for this tenant");
         }
@@ -301,7 +347,7 @@ export function createAtlasHttpServer(options: AtlasHttpServerOptions): Server {
         /^\/v1\/tenants\/([0-9a-f-]+)\/(assets|printers|servers|network)$/i,
       );
       if (method === "GET" && assetListMatch) {
-        requireOperator(request, options.operatorToken);
+        requireOperator(request, options);
         if (!options.operatorTenantIds?.includes(url.pathname.split("/")[3])) {
           throw new HttpError(403, "TENANT_FORBIDDEN", "Reader is not authorized for this tenant");
         }
@@ -344,7 +390,7 @@ export function createAtlasHttpServer(options: AtlasHttpServerOptions): Server {
         /^\/v1\/tenants\/([0-9a-f-]+)\/status$/i,
       );
       if (method === "GET" && tenantStatusMatch) {
-        requireOperator(request, options.operatorToken);
+        requireOperator(request, options);
         if (!options.operatorTenantIds?.includes(url.pathname.split("/")[3])) {
           throw new HttpError(403, "TENANT_FORBIDDEN", "Reader is not authorized for this tenant");
         }

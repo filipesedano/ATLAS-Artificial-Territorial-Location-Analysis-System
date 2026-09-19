@@ -1,8 +1,9 @@
+import { AUTH_SCHEMA_SQL } from "./local-auth.ts";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const LOCAL_SCHEMA_VERSION = 1;
+export const LOCAL_SCHEMA_VERSION = 2;
 
 interface Migration {
   version: number;
@@ -76,6 +77,7 @@ const MIGRATIONS: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  { version: 2, statements: AUTH_SCHEMA_SQL },
 ];
 
 export class LocalDatabase {
