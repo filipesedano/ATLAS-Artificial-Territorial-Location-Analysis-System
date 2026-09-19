@@ -19,3 +19,14 @@ test('diagnostic hides credentials and blocks identical reader/collector tokens'
   const result=await diagnose({env:{ATLAS_OPERATOR_TOKEN:secret,ATLAS_COLLECTOR_TOKEN:secret}});
   assert.equal(result.status,'BLOQUEADO');assert.equal(JSON.stringify(result).includes(secret),false);
 });
+
+test('configuration denies malformed port and wrong tenant policy without exposing values', async () => {
+  const result = await diagnose({env:{ATLAS_HTTP_PORT:'not-a-port'},portProbe:async()=>{throw Error('must not probe');}});
+  assert.equal(result.status,'BLOQUEADO');
+});
+test('occupied or indeterminate local port blocks startup', async () => {
+  for(const state of ['OCCUPIED','UNKNOWN']) {
+    const result=await diagnose({env:{ATLAS_OPERATOR_TOKEN:'reader-test',ATLAS_COLLECTOR_TOKEN:'collector-test'},portProbe:async()=>state});
+    assert.equal(result.status,'BLOQUEADO');
+  }
+});

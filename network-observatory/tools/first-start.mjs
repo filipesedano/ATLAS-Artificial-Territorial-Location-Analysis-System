@@ -1,3 +1,5 @@
+import { loadConfig } from './runtime-config.mjs';
+import { createConnection } from 'node:net';
 import { access, statfs } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { totalmem, freemem, platform, release } from 'node:os';
@@ -19,7 +21,16 @@ export async function networkDetails({ os = platform(), systemRoot = process.env
   const result = await run(command.file, command.args, { shell: false, timeout: 15_000, maxBuffer: 2 * 1024 * 1024, encoding: 'buffer', windowsHide: true });
   return { supported: true, output: result.stdout };
 }
-export async function diagnose({ env = process.env, cwd = process.cwd() } = {}) {
+export async function inspectPort(port, timeoutMs = 1000) {
+  return new Promise(resolve => {
+    const socket = createConnection({host:'127.0.0.1',port});
+    const finish = state => { socket.destroy(); resolve(state); };
+    socket.once('connect',()=>finish('OCCUPIED'));
+    socket.once('error',error=>finish(error.code === 'ECONNREFUSED' ? 'AVAILABLE' : 'UNKNOWN'));
+    socket.setTimeout(timeoutMs,()=>finish('UNKNOWN'));
+  });
+}
+export async function diagnose({ env = process.env, cwd = process.cwd(), now = new Date(), portProbe = inspectPort } = {}) {
   const checks = [];
   const add = (name, status, detail) => checks.push({ name, status, detail });
   const [major, minor] = process.versions.node.split('.').map(Number);
@@ -30,14 +41,22 @@ export async function diagnose({ env = process.env, cwd = process.cwd() } = {}) 
     const disk = await statfs(root);
     add('Disco do projeto', 'INFORMATIVO', `${(disk.bavail*disk.bsize/2**30).toFixed(1)} GiB disponíveis; não é garantia de capacidade da carga futura`);
   } catch { add('Disco do projeto', 'CONFIGURAR', 'Não foi possível consultar o espaço disponível.'); }
-  const db = env.ATLAS_DB_PATH ? resolve(cwd, env.ATLAS_DB_PATH) : join(root, 'services', 'control-plane', 'data', 'atlas-local.db');
-  try { await access(db, constants.F_OK); add('Banco', 'INFORMATIVO', 'Arquivo encontrado; conteúdo, integridade e compatibilidade não foram verificados.'); }
-  catch (error) { add('Banco', 'CONFIGURAR', error.code === 'ENOENT' ? 'Arquivo não encontrado no caminho configurado ou padrão do Control Plane; nenhum banco foi criado.' : 'Não foi possível verificar o caminho do banco.'); }
+  let config;
+  try { config = loadConfig(env,cwd); add('Configuração', 'PRONTO', 'Formato, escopo e política validados; valores sensíveis ocultos.'); }
+  catch (error) { add('Configuração','BLOQUEADO',error.message); }
+  if (config) {
+    try { await access(config.databasePath, constants.F_OK); add('Banco', 'INFORMATIVO', 'Arquivo encontrado; conteúdo e integridade não foram verificados.'); }
+    catch (error) { add('Banco', error.code === 'ENOENT' ? 'INFORMATIVO' : 'BLOQUEADO', error.code === 'ENOENT' ? 'Instalação nova: banco será criado apenas ao iniciar. Nenhum arquivo criado pelo diagnóstico.' : 'Caminho do banco inacessível.'); }
+    try { await access(`${config.databasePath}.atlas.lock`, constants.F_OK); add('Instância', 'BLOQUEADO', 'Trava encontrada: servidor ativo ou encerramento incompleto. Não removida automaticamente.'); }
+    catch(error) { if (error.code !== 'ENOENT') add('Instância','BLOQUEADO','Não foi possível verificar a trava.'); }
+    const active = config.policy.state === 'ACTIVE' && Date.parse(config.policy.validFrom) <= now.getTime() && now.getTime() < Date.parse(config.policy.validUntil);
+    add('Coleta', 'INFORMATIVO', active ? 'Política sintética vigente; somente simulação. Não comprova consentimento real.' : 'Coleta bloqueada por estado ou validade. Consultas continuam permitidas.');
+    const portState = await portProbe(config.port);
+    add('Porta local', portState === 'AVAILABLE' ? 'PRONTO' : 'BLOQUEADO', portState === 'AVAILABLE' ? 'Sem listener TCP detectado; será revalidada ao iniciar.' : portState === 'OCCUPIED' ? 'Há um listener TCP. Não comprova que seja ATLAS; nenhum processo foi encerrado.' : 'Situação da porta indeterminada.');
+  }
   for (const key of ['ATLAS_OPERATOR_TOKEN', 'ATLAS_COLLECTOR_TOKEN']) add(key, env[key] ? 'PRONTO' : 'CONFIGURAR', env[key] ? 'Definido; valor oculto.' : 'Não definido neste processo.');
   if (env.ATLAS_OPERATOR_TOKEN && env.ATLAS_OPERATOR_TOKEN === env.ATLAS_COLLECTOR_TOKEN) add('Separação de credenciais', 'BLOQUEADO', 'Leitura e coleta precisam de tokens distintos.');
-  add('Política de coleta', 'INFORMATIVO', env.ATLAS_COLLECTION_POLICY_FILE ? 'Caminho configurado; política ainda não validada.' : 'Sem arquivo explícito: o exemplo usa política sintética com validade limitada.');
-  add('Porta / serviço', 'INFORMATIVO', 'Não testados nesta etapa; nenhum socket foi aberto e nenhum serviço foi iniciado.');
-  return { status: checks.some(c=>c.status==='BLOQUEADO') ? 'BLOQUEADO' : checks.some(c=>c.status==='CONFIGURAR') ? 'PRECISA DE CONFIGURAÇÃO' : 'PRÉ-CHECAGENS CONCLUÍDAS', checks };
+  return { status: checks.some(c=>c.status==='BLOQUEADO') ? 'BLOQUEADO' : checks.some(c=>c.status==='CONFIGURAR') ? 'PRECISA DE CONFIGURAÇÃO' : 'PRONTO PARA INICIAR', checks };
 }
 export async function main(args = process.argv.slice(2)) {
   if (args.some(a => !['--network-details', '--help'].includes(a))) throw new Error('Opção desconhecida. Use --help.');
