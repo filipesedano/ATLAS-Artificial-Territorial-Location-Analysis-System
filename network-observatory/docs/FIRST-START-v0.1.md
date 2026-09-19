@@ -15,3 +15,7 @@ Diagnóstico padrão informa SO, Node, memória e espaço no disco do projeto; v
 Linux não executa ipconfig e esta entrega não adiciona equivalente automático. O hardware do servidor doméstico não foi inspecionado remotamente.
 
 Validação: 76 testes passaram no Linux/Node 24.19.0. Incluem comando/argumentos fixos sem shell usando executor simulado, bloqueio fora do Windows e ocultação de credenciais. Diagnóstico executado localmente em Linux. Execução real do ipconfig e caracteres acentuados precisam de teste no Windows.
+
+## Evolução posterior
+
+A entrega descrita em VALIDATION-LAYERS-v0.1.md substitui a limitação anterior de porta/política: agora há validação de configuração/política e conexão TCP local somente para verificar ocupação. O diagnóstico continua sem abrir banco ou iniciar serviço. Use tools/start-atlas.mjs (npm start na pasta network-observatory) para início explícito com trava e verificação de resposta.
