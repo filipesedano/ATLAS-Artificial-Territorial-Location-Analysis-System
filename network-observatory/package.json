@@ -1,0 +1,12 @@
+{
+  "name": "@atlas/network-observatory",
+  "version": "0.1.2-preview",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "diagnose": "node tools/first-start.mjs",
+    "start": "node tools/start-atlas.mjs",
+    "test": "node tools/run-tests.mjs"
+  }
+}
